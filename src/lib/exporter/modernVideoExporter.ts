@@ -1570,6 +1570,9 @@ export class ModernVideoExporter {
 		if (this.config.webcam?.enabled && !this.getNativeWebcamSourcePath()) {
 			reasons.push("unsupported-webcam-source");
 		}
+		if (this.config.webcam?.enabled && this.config.webcam.effect?.type === "silhouette") {
+			reasons.push("unsupported-webcam-silhouette-effect");
+		}
 		if (this.hasUnsupportedNativeStaticLayoutWebcamShape()) {
 			reasons.push("unsupported-rectangular-webcam-overlay");
 		}

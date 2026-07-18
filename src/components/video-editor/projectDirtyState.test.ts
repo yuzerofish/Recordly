@@ -118,4 +118,34 @@ describe("hasUnsavedProjectChanges", () => {
 
 		expect(hasUnsavedProjectChanges(current, saved)).toBe(true);
 	});
+
+	it("detects webcam person effect changes", () => {
+		const baseWebcam = {
+			enabled: true,
+			sourcePath: "/Users/test/webcam.mp4",
+			timeOffsetMs: 0,
+			size: 28,
+			effect: {
+				type: "none",
+				silhouetteColor: "#050505",
+				opacity: 1,
+				feather: 6,
+				background: "transparent",
+			},
+		};
+		const saved = createProjectData({
+			editor: { ...createProjectData().editor, webcam: baseWebcam },
+		});
+		const current = createProjectData({
+			editor: {
+				...createProjectData().editor,
+				webcam: {
+					...baseWebcam,
+					effect: { ...baseWebcam.effect, type: "silhouette" },
+				},
+			},
+		});
+
+		expect(hasUnsavedProjectChanges(current, saved)).toBe(true);
+	});
 });

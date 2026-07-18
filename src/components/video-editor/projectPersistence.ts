@@ -52,6 +52,7 @@ import {
 	DEFAULT_PADDING,
 	DEFAULT_PLAYBACK_SPEED,
 	DEFAULT_WEBCAM_CORNER_RADIUS,
+	DEFAULT_WEBCAM_EFFECT_SETTINGS,
 	DEFAULT_WEBCAM_MARGIN,
 	DEFAULT_WEBCAM_OVERLAY,
 	DEFAULT_WEBCAM_POSITION_PRESET,
@@ -75,6 +76,7 @@ import {
 	type SpeedRegion,
 	type TrimRegion,
 	type WebcamOverlaySettings,
+	type WebcamEffectSettings,
 	type ZoomMotionBlurTuning,
 	type ZoomRegion,
 	type ZoomTransitionEasing,
@@ -823,6 +825,8 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 
 	const webcam: Partial<WebcamOverlaySettings> =
 		editor.webcam && typeof editor.webcam === "object" ? editor.webcam : {};
+	const webcamEffect: Partial<WebcamEffectSettings> =
+		webcam.effect && typeof webcam.effect === "object" ? webcam.effect : {};
 	const webcamSourcePath = typeof webcam.sourcePath === "string" ? webcam.sourcePath : null;
 	const legacyZoomScaleEffect = isFiniteNumber(
 		(webcam as Partial<{ zoomScaleEffect: number }>).zoomScaleEffect,
@@ -1003,6 +1007,28 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 			sourcePath: webcamSourcePath,
 			mirror:
 				typeof webcam.mirror === "boolean" ? webcam.mirror : DEFAULT_WEBCAM_OVERLAY.mirror,
+			effect: {
+				type:
+					webcamEffect.type === "silhouette" || webcamEffect.type === "none"
+						? webcamEffect.type
+						: DEFAULT_WEBCAM_EFFECT_SETTINGS.type,
+				silhouetteColor: normalizeCursorClickEffectColor(
+					webcamEffect.silhouetteColor,
+					DEFAULT_WEBCAM_EFFECT_SETTINGS.silhouetteColor,
+				),
+				opacity: isFiniteNumber(webcamEffect.opacity)
+					? clamp(webcamEffect.opacity, 0, 1)
+					: DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity,
+				feather: isFiniteNumber(webcamEffect.feather)
+					? clamp(webcamEffect.feather, 0, 20)
+					: DEFAULT_WEBCAM_EFFECT_SETTINGS.feather,
+				background:
+					webcamEffect.background === "transparent" ||
+					webcamEffect.background === "original" ||
+					webcamEffect.background === "blur"
+						? webcamEffect.background
+						: DEFAULT_WEBCAM_EFFECT_SETTINGS.background,
+			},
 			cropRegion: normalizeWebcamCropRegion(webcam.cropRegion),
 			positionPreset:
 				webcam.positionPreset === "top-left" ||

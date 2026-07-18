@@ -61,17 +61,25 @@ describe("editorPreferences", () => {
 	});
 
 	it("normalizes invalid values back to safe defaults", () => {
-		expect(
-			normalizeEditorPreferences({
-				wallpaper: 123,
-				showCursor: "yes",
-				cropRegion: { x: 2, width: -1 },
-				aspectRatio: "bad-value",
-				customAspectWidth: "0",
-				customAspectHeight: "",
-				customWallpapers: "not-an-array",
-			}),
-		).toMatchObject({
+		const normalized = normalizeEditorPreferences({
+			wallpaper: 123,
+			showCursor: "yes",
+			cropRegion: { x: 2, width: -1 },
+			webcam: {
+				effect: {
+					type: "invalid",
+					silhouetteColor: "black",
+					opacity: 5,
+					feather: Number.NaN,
+					background: "invalid",
+				},
+			},
+			aspectRatio: "bad-value",
+			customAspectWidth: "0",
+			customAspectHeight: "",
+			customWallpapers: "not-an-array",
+		});
+		expect(normalized).toMatchObject({
 			wallpaper: DEFAULT_EDITOR_PREFERENCES.wallpaper,
 			showCursor: DEFAULT_EDITOR_PREFERENCES.showCursor,
 			aspectRatio: DEFAULT_EDITOR_PREFERENCES.aspectRatio,
@@ -81,6 +89,25 @@ describe("editorPreferences", () => {
 			customAspectHeight: DEFAULT_EDITOR_PREFERENCES.customAspectHeight,
 			customWallpapers: DEFAULT_EDITOR_PREFERENCES.customWallpapers,
 		});
+		expect(normalized.webcam.effect).toEqual(DEFAULT_EDITOR_PREFERENCES.webcam.effect);
+	});
+
+	it("persists webcam silhouette settings", () => {
+		const localStorage = createStorageMock();
+		vi.stubGlobal("localStorage", localStorage);
+		const effect = {
+			type: "silhouette" as const,
+			silhouetteColor: "#050505",
+			opacity: 0.75,
+			feather: 8,
+			background: "transparent" as const,
+		};
+
+		saveEditorPreferences({
+			webcam: { ...DEFAULT_EDITOR_PREFERENCES.webcam, effect },
+		});
+
+		expect(loadEditorPreferences().webcam.effect).toEqual(effect);
 	});
 
 	it("defaults MP4 exports to source quality", () => {

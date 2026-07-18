@@ -799,7 +799,7 @@ export default function VideoEditor() {
 			padding: { ...padding },
 			frame,
 			cropRegion: { ...cropRegion },
-			webcam: { ...webcam },
+			webcam: { ...webcam, effect: { ...webcam.effect } },
 			aspectRatio,
 			exportEncodingMode,
 			exportBackendPreference,
@@ -954,7 +954,7 @@ export default function VideoEditor() {
 		setPadding({ ...snapshot.padding });
 		setFrame(snapshot.frame);
 		setCropRegion({ ...snapshot.cropRegion });
-		setWebcam({ ...snapshot.webcam });
+		setWebcam({ ...snapshot.webcam, effect: { ...snapshot.webcam.effect } });
 		setAspectRatio(snapshot.aspectRatio);
 		setExportEncodingMode(snapshot.exportEncodingMode);
 		setExportBackendPreference(snapshot.exportBackendPreference);
@@ -4706,6 +4706,10 @@ export default function VideoEditor() {
 
 					exporterRef.current = gifExporter as unknown as VideoExporter;
 					const result = await gifExporter.export();
+					const smokeExportElapsedMs =
+						smokeExportStartedAt !== null
+							? Math.round(performance.now() - smokeExportStartedAt)
+							: undefined;
 
 					if (result.success && result.blob) {
 						const timestamp = Date.now();
@@ -4719,6 +4723,16 @@ export default function VideoEditor() {
 						);
 
 						if (saveResult.canceled) {
+							if (smokeExportConfig.enabled) {
+								await writeSmokeExportReport(smokeExportConfig.outputPath, {
+									success: false,
+									phase: "save",
+									format: "gif",
+									elapsedMs: smokeExportElapsedMs,
+									error: "Save canceled",
+									progressSamples: smokeProgressSamples,
+								});
+							}
 							pendingExportSaveRef.current = pendingSave;
 							setHasPendingExportSave(true);
 							setExportError(
@@ -4727,6 +4741,16 @@ export default function VideoEditor() {
 							toast.info("Save canceled. You can save again without re-exporting.");
 							keepExportDialogOpen = true;
 						} else if (saveResult.success && saveResult.path) {
+							if (smokeExportConfig.enabled) {
+								await writeSmokeExportReport(smokeExportConfig.outputPath, {
+									success: true,
+									phase: "saved",
+									format: "gif",
+									elapsedMs: smokeExportElapsedMs,
+									outputPath: saveResult.path,
+									progressSamples: smokeProgressSamples,
+								});
+							}
 							if (smokeExportStartedAt !== null) {
 								console.log(
 									`[smoke-export] Completed in ${Math.round(performance.now() - smokeExportStartedAt)}ms (${saveResult.path})`,
@@ -4739,6 +4763,16 @@ export default function VideoEditor() {
 								return;
 							}
 						} else {
+							if (smokeExportConfig.enabled) {
+								await writeSmokeExportReport(smokeExportConfig.outputPath, {
+									success: false,
+									phase: "save",
+									format: "gif",
+									elapsedMs: smokeExportElapsedMs,
+									error: saveResult.message || "Failed to save GIF",
+									progressSamples: smokeProgressSamples,
+								});
+							}
 							setExportError(saveResult.message || "Failed to save GIF");
 							toast.error(saveResult.message || "Failed to save GIF");
 							if (smokeExportConfig.enabled) {
@@ -4747,6 +4781,16 @@ export default function VideoEditor() {
 							}
 						}
 					} else {
+						if (smokeExportConfig.enabled) {
+							await writeSmokeExportReport(smokeExportConfig.outputPath, {
+								success: false,
+								phase: "export",
+								format: "gif",
+								elapsedMs: smokeExportElapsedMs,
+								error: result.error || "GIF export failed",
+								progressSamples: smokeProgressSamples,
+							});
+						}
 						setExportError(result.error || "GIF export failed");
 						toast.error(result.error || "GIF export failed");
 						if (smokeExportConfig.enabled) {
@@ -5266,12 +5310,28 @@ export default function VideoEditor() {
 			return;
 		}
 
+		const video = videoPlaybackRef.current?.video;
+		if (!video) {
+			return;
+		}
+
 		smokeExportStartedRef.current = true;
-		void handleExport({
-			format: "mp4",
-			quality: "good",
-			encodingMode: smokeExportConfig.encodingMode ?? "balanced",
-		});
+		void handleExport(
+			resolveExportStartSettings({
+				sourceWidth: video.videoWidth || 1920,
+				sourceHeight: video.videoHeight || 1080,
+				exportFormat: smokeExportConfig.format ?? "mp4",
+				includeCaptionSidecar: false,
+				exportEncodingMode: smokeExportConfig.encodingMode ?? exportEncodingMode,
+				exportQuality: smokeExportConfig.quality ?? exportQuality,
+				mp4FrameRate: smokeExportConfig.fps ?? mp4FrameRate,
+				exportBackendPreference,
+				exportPipelineModel,
+				gifFrameRate,
+				gifLoop,
+				gifSizePreset,
+			}),
+		);
 	}, [
 		cursorTelemetrySourcePath,
 		error,
@@ -5281,8 +5341,19 @@ export default function VideoEditor() {
 		duration,
 		smokeExportConfig.enabled,
 		smokeExportConfig.encodingMode,
+		smokeExportConfig.format,
+		smokeExportConfig.fps,
 		smokeExportConfig.outputPath,
 		smokeExportConfig.projectPath,
+		smokeExportConfig.quality,
+		exportBackendPreference,
+		exportEncodingMode,
+		exportPipelineModel,
+		exportQuality,
+		gifFrameRate,
+		gifLoop,
+		gifSizePreset,
+		mp4FrameRate,
 		videoPath,
 		videoSourcePath,
 	]);

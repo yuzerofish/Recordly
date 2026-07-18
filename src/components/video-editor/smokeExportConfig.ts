@@ -12,6 +12,7 @@ export type SmokeExportConfig = {
 	enabled: boolean;
 	inputPath: string | null;
 	outputPath: string | null;
+	format?: "mp4" | "gif";
 	useNativeExport: boolean;
 	encodingMode?: ExportEncodingMode;
 	shadowIntensity?: number;
@@ -77,6 +78,12 @@ export function getSmokeExportConfig(search: string): SmokeExportConfig {
 		enabled,
 		inputPath: enabled ? params.get("smokeInput") : null,
 		outputPath: enabled ? params.get("smokeOutput") : null,
+		format:
+			enabled && params.get("smokeFormat") === "gif"
+				? "gif"
+				: enabled && params.get("smokeFormat") === "mp4"
+					? "mp4"
+					: undefined,
 		useNativeExport: enabled ? params.get("smokeUseNativeExport") === "1" : false,
 		encodingMode:
 			enabled && params.get("smokeEncodingMode") === "fast"
@@ -110,9 +117,15 @@ export function getSmokeExportConfig(search: string): SmokeExportConfig {
 					: enabled && params.get("smokeBackendPreference") === "breeze"
 						? "breeze"
 						: undefined,
-		renderBackend: enabled ? parseSmokeRenderBackend(params.get("smokeRenderBackend")) : undefined,
-		maxEncodeQueue: enabled ? parseSmokeExportNumber(params.get("smokeMaxEncodeQueue")) : undefined,
-		maxDecodeQueue: enabled ? parseSmokeExportNumber(params.get("smokeMaxDecodeQueue")) : undefined,
+		renderBackend: enabled
+			? parseSmokeRenderBackend(params.get("smokeRenderBackend"))
+			: undefined,
+		maxEncodeQueue: enabled
+			? parseSmokeExportNumber(params.get("smokeMaxEncodeQueue"))
+			: undefined,
+		maxDecodeQueue: enabled
+			? parseSmokeExportNumber(params.get("smokeMaxDecodeQueue"))
+			: undefined,
 		maxPendingFrames: enabled
 			? parseSmokeExportNumber(params.get("smokeMaxPendingFrames"))
 			: undefined,

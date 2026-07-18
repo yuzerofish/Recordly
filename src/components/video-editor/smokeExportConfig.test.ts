@@ -8,6 +8,7 @@ describe("getSmokeExportConfig", () => {
 			enabled: false,
 			inputPath: null,
 			outputPath: null,
+			format: undefined,
 			useNativeExport: false,
 			encodingMode: undefined,
 			shadowIntensity: undefined,
@@ -31,6 +32,7 @@ describe("getSmokeExportConfig", () => {
 			"?smokeExport=1" +
 				"&smokeInput=/tmp/input.mp4" +
 				"&smokeOutput=/tmp/output.mp4" +
+				"&smokeFormat=gif" +
 				"&smokeUseNativeExport=1" +
 				"&smokeEncodingMode=quality" +
 				"&smokeShadowIntensity=0" +
@@ -52,6 +54,7 @@ describe("getSmokeExportConfig", () => {
 			enabled: true,
 			inputPath: "/tmp/input.mp4",
 			outputPath: "/tmp/output.mp4",
+			format: "gif",
 			useNativeExport: true,
 			encodingMode: "quality",
 			shadowIntensity: 0,
@@ -74,6 +77,7 @@ describe("getSmokeExportConfig", () => {
 		const config = getSmokeExportConfig(
 			"?smokeExport=1" +
 				"&smokeEncodingMode=slow" +
+				"&smokeFormat=webm" +
 				"&smokeShadowIntensity=-1" +
 				"&smokeWebcamShadow=nan" +
 				"&smokeWebcamSize=-0.1" +
@@ -91,6 +95,7 @@ describe("getSmokeExportConfig", () => {
 			enabled: true,
 			useNativeExport: false,
 			encodingMode: undefined,
+			format: undefined,
 			shadowIntensity: undefined,
 			webcamShadow: undefined,
 			webcamSize: undefined,
@@ -109,9 +114,7 @@ describe("getSmokeExportConfig", () => {
 describe("getDevOpenRecordingConfig", () => {
 	it("reads dev-open paths independently from smoke export", () => {
 		expect(
-			getDevOpenRecordingConfig(
-				"?devOpenInput=/tmp/input.mp4&devOpenWebcam=/tmp/webcam.mp4",
-			),
+			getDevOpenRecordingConfig("?devOpenInput=/tmp/input.mp4&devOpenWebcam=/tmp/webcam.mp4"),
 		).toEqual({
 			inputPath: "/tmp/input.mp4",
 			webcamInputPath: "/tmp/webcam.mp4",

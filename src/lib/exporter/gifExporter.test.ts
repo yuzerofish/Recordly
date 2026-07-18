@@ -4,6 +4,7 @@ import {
 	buildGifFrameRendererConfig,
 	calculateOutputDimensions,
 	getGifRepeat,
+	trimGifTrailingPadding,
 } from "./gifExporter";
 import { GIF_SIZE_PRESETS, GifSizePreset } from "./types";
 
@@ -19,6 +20,44 @@ import { GIF_SIZE_PRESETS, GifSizePreset } from "./types";
  * Feature: gif-export, Property 2: Loop Encoding Correctness
  */
 describe("GIF Exporter", () => {
+	describe("output normalization", () => {
+		it("removes zero-filled gif.js page padding after the trailer", async () => {
+			const blob = new Blob(
+				[new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x3b, 0, 0, 0])],
+				{ type: "image/gif" },
+			);
+
+			const normalized = await trimGifTrailingPadding(blob);
+
+			expect(Array.from(new Uint8Array(await normalized.arrayBuffer()))).toEqual([
+				0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x3b,
+			]);
+			expect(normalized.type).toBe("image/gif");
+		});
+
+		it("leaves a canonical GIF unchanged", async () => {
+			const blob = new Blob([new Uint8Array([0x47, 0x49, 0x46, 0x3b])], {
+				type: "image/gif",
+			});
+
+			expect(await trimGifTrailingPadding(blob)).toBe(blob);
+		});
+
+		it("does not trim non-zero data after a trailer", async () => {
+			const blob = new Blob([new Uint8Array([0x47, 0x49, 0x46, 0x3b, 0, 0x21])], {
+				type: "image/gif",
+			});
+
+			expect(await trimGifTrailingPadding(blob)).toBe(blob);
+		});
+
+		it("does not turn an all-zero malformed payload into an empty GIF", async () => {
+			const blob = new Blob([new Uint8Array(128)], { type: "image/gif" });
+
+			expect(await trimGifTrailingPadding(blob)).toBe(blob);
+		});
+	});
+
 	describe("Property 2: Loop Encoding Correctness", () => {
 		/**
 		 * Test the loop configuration mapping logic.

@@ -739,6 +739,32 @@ describe("ModernVideoExporter native static-layout eligibility", () => {
 		).toBe("unsupported-rectangular-webcam-overlay");
 	});
 
+	it("skips native static layout when the webcam silhouette effect is enabled", () => {
+		const exporter = createExporter({
+			webcam: {
+				enabled: true,
+				sourcePath: "C:\\recordly\\webcam.mp4",
+				width: 40,
+				height: 40,
+				effect: {
+					type: "silhouette",
+					silhouetteColor: "#050505",
+					opacity: 1,
+					feather: 6,
+					background: "transparent",
+				},
+			},
+		});
+
+		expect(
+			exporter.getNativeStaticLayoutSkipReason(
+				{ audioMode: "edited-track", strategy: "offline-render-fallback" },
+				videoInfo,
+				60,
+			),
+		).toBe("unsupported-webcam-silhouette-effect");
+	});
+
 	it("allows native speed timelines with a resolvable webcam source", () => {
 		const speedRegions: SpeedRegion[] = [
 			{ id: "speed-1", startMs: 1_000, endMs: 4_000, speed: 1.5 },

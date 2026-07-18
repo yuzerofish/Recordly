@@ -29,6 +29,9 @@
 		"selectMicToEnable": "選擇要啟用的麥克風",
 		"noMicrophonesFound": "找不到麥克風",
 		"webcam": "網路攝影機",
+		"personOriginal": "原始畫面",
+		"personSilhouette": "黑色剪影",
+		"personSilhouetteRetry": "重試黑色剪影",
 		"turnOffWebcam": "關閉網路攝影機",
 		"hideFloatingWebcamPreview": "隱藏浮動預覽",
 		"showFloatingWebcamPreview": "顯示浮動預覽",
@@ -44,15 +47,15 @@
 		"cancel": "取消",
 		"more": "更多",
 		"update": {
-		"update": "更新",
-		"updated": "已更新",
-		"idleTitle": "檢查更新。",
-		"checkingTitle": "正在檢查更新...",
-		"downloadingTitle": "正在下載更新...",
-		"errorTitle": "檢查更新失敗，點一下重試。",
-		"upToDateTitle": "Recordly {{version}} 已是最新版本。",
-		"availableTitle": "Recordly {{version}} 已推出新版本。",
-		"availableGenericTitle": "有可用更新。"
+			"update": "更新",
+			"updated": "已更新",
+			"idleTitle": "檢查更新。",
+			"checkingTitle": "正在檢查更新...",
+			"downloadingTitle": "正在下載更新...",
+			"errorTitle": "檢查更新失敗，點一下重試。",
+			"upToDateTitle": "Recordly {{version}} 已是最新版本。",
+			"availableTitle": "Recordly {{version}} 已推出新版本。",
+			"availableGenericTitle": "有可用更新。"
 		}
 	},
 	"sourceSelector": {

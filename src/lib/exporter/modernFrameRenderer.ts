@@ -87,6 +87,7 @@ import {
 	initializePixiApplicationWithTimeout,
 } from "@/lib/pixiApplicationLifecycle";
 import { isVideoWallpaperSource } from "@/lib/wallpapers";
+import { WebcamEffectPipeline } from "@/lib/webcamEffects";
 import {
 	type AnnotationRenderAssets,
 	preloadAnnotationAssets,
@@ -425,6 +426,8 @@ export class FrameRenderer {
 	private webcamSeekPromise: Promise<void> | null = null;
 	private webcamFrameCacheCanvas: HTMLCanvasElement | null = null;
 	private webcamFrameCacheCtx: CanvasRenderingContext2D | null = null;
+	private webcamEffectPipeline: WebcamEffectPipeline | null = null;
+	private webcamEffectFrameSource: CanvasImageSource | null = null;
 	private sceneVideoFrameStagingCanvas: HTMLCanvasElement | null = null;
 	private sceneVideoFrameStagingCtx: CanvasRenderingContext2D | null = null;
 	private backgroundVideoFrameStagingCanvas: HTMLCanvasElement | null = null;
@@ -2838,6 +2841,35 @@ export class FrameRenderer {
 		}
 	}
 
+	private async prepareWebcamEffectFrame(targetTime: number): Promise<void> {
+		const effect = this.config.webcam?.effect;
+		if (effect?.type !== "silhouette") {
+			this.webcamEffectFrameSource = null;
+			return;
+		}
+
+		const source = this.webcamDecodedFrame ?? this.webcamVideoElement;
+		if (!source) {
+			this.webcamEffectFrameSource = null;
+			return;
+		}
+		const dimensions = this.getWebcamSourceDimensions(source);
+		if (dimensions.width <= 0 || dimensions.height <= 0) {
+			this.webcamEffectFrameSource = null;
+			return;
+		}
+
+		this.webcamEffectPipeline ??= new WebcamEffectPipeline();
+		const timestampMs = Math.max(0, (this.lastSyncedWebcamTime ?? targetTime) * 1000);
+		const result = await this.webcamEffectPipeline.processFrame({
+			source,
+			timestampMs,
+			settings: effect,
+			mode: "export",
+		});
+		this.webcamEffectFrameSource = result.processed ? result.source : null;
+	}
+
 	private updateWebcamOverlay(referenceTimeSeconds = this.currentVideoTime): void {
 		const webcam = this.config.webcam;
 		if (!webcam?.enabled || !this.webcamRootContainer || !this.webcamMaskGraphics) {
@@ -2849,12 +2881,13 @@ export class FrameRenderer {
 			return;
 		}
 
-		const webcamSource = this.webcamDecodedFrame ?? this.webcamVideoElement;
-		const liveSourceDimensions = webcamSource
-			? this.getWebcamSourceDimensions(webcamSource)
+		const rawWebcamSource = this.webcamDecodedFrame ?? this.webcamVideoElement;
+		const webcamSource = this.webcamEffectFrameSource ?? rawWebcamSource;
+		const liveSourceDimensions = rawWebcamSource
+			? this.getWebcamSourceDimensions(rawWebcamSource)
 			: { width: 0, height: 0 };
 		const activeWebcamVideoElement =
-			webcamSource === this.webcamVideoElement ? this.webcamVideoElement : null;
+			rawWebcamSource === this.webcamVideoElement ? this.webcamVideoElement : null;
 		const expectedWebcamTargetTime =
 			this.getExpectedWebcamTargetTimeSeconds(referenceTimeSeconds);
 		const measuredWebcamTime =
@@ -2934,7 +2967,10 @@ export class FrameRenderer {
 			legacyCorner: webcam.corner,
 		});
 		const radius = Math.max(0, webcam.cornerRadius ?? 18);
-		const shadowStrength = clampUnitInterval(webcam.shadow ?? 0);
+		const shadowStrength =
+			webcam.effect?.type === "silhouette" && webcam.effect.background === "transparent"
+				? 0
+				: clampUnitInterval(webcam.shadow ?? 0);
 
 		this.webcamRootContainer.visible = true;
 
@@ -2976,6 +3012,7 @@ export class FrameRenderer {
 
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
 			await this.syncWebcamFrame(webcamRenderTimeSeconds);
+			await this.prepareWebcamEffectFrame(webcamRenderTimeSeconds);
 		}
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
@@ -3228,7 +3265,9 @@ export class FrameRenderer {
 		}
 
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
-			await this.syncWebcamFrame(Math.max(0, this.currentVideoTime));
+			const targetTime = Math.max(0, this.currentVideoTime);
+			await this.syncWebcamFrame(targetTime);
+			await this.prepareWebcamEffectFrame(targetTime);
 		}
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
@@ -3968,6 +4007,9 @@ export class FrameRenderer {
 		this.cleanupWebcamSource = null;
 		this.webcamFrameCacheCanvas = null;
 		this.webcamFrameCacheCtx = null;
+		this.webcamEffectPipeline?.dispose();
+		this.webcamEffectPipeline = null;
+		this.webcamEffectFrameSource = null;
 		this.sceneVideoFrameStagingCanvas = null;
 		this.sceneVideoFrameStagingCtx = null;
 		this.webcamVideoFrameStagingCanvas = null;

@@ -64,6 +64,9 @@ function getEditorWindowQuery(): Record<string, string> {
 		if (process.env.RECORDLY_SMOKE_EXPORT_OUTPUT) {
 			query.smokeOutput = process.env.RECORDLY_SMOKE_EXPORT_OUTPUT;
 		}
+		if (process.env.RECORDLY_SMOKE_EXPORT_FORMAT) {
+			query.smokeFormat = process.env.RECORDLY_SMOKE_EXPORT_FORMAT;
+		}
 		if (process.env.RECORDLY_SMOKE_EXPORT_USE_NATIVE === "1") {
 			query.smokeUseNativeExport = "1";
 		}
@@ -606,9 +609,14 @@ export function createHudOverlayWindow(): BrowserWindow {
 	if (VITE_DEV_SERVER_URL) {
 		win.loadURL(VITE_DEV_SERVER_URL + "?windowType=hud-overlay");
 	} else {
-		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
-			query: { windowType: "hud-overlay" },
-		});
+		const packagedRendererBaseUrl = getPackagedRendererBaseUrl();
+		if (packagedRendererBaseUrl) {
+			win.loadURL(`${packagedRendererBaseUrl}/?windowType=hud-overlay`);
+		} else {
+			win.loadFile(path.join(RENDERER_DIST, "index.html"), {
+				query: { windowType: "hud-overlay" },
+			});
+		}
 	}
 
 	return win;
