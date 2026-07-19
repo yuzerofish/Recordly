@@ -127,7 +127,7 @@ describe("hasUnsavedProjectChanges", () => {
 			size: 28,
 			effect: {
 				type: "none",
-				silhouetteColor: "#050505",
+				silhouetteColor: "#000000",
 				opacity: 1,
 				feather: 6,
 				background: "transparent",

@@ -10,7 +10,11 @@ import {
 	saveEditorPreferences,
 	saveEditorPresets,
 } from "./editorPreferences";
-import { DEFAULT_AUTO_CAPTION_SETTINGS, DEFAULT_CROP_REGION } from "./types";
+import {
+	DEFAULT_AUTO_CAPTION_SETTINGS,
+	DEFAULT_CROP_REGION,
+	WEBCAM_SILHOUETTE_COLOR,
+} from "./types";
 
 function createStorageMock(initialValues: Record<string, string> = {}): Storage {
 	const store = new Map(Object.entries(initialValues));
@@ -107,7 +111,10 @@ describe("editorPreferences", () => {
 			webcam: { ...DEFAULT_EDITOR_PREFERENCES.webcam, effect },
 		});
 
-		expect(loadEditorPreferences().webcam.effect).toEqual(effect);
+		expect(loadEditorPreferences().webcam.effect).toEqual({
+			...effect,
+			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+		});
 	});
 
 	it("defaults MP4 exports to source quality", () => {

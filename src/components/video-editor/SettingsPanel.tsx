@@ -102,6 +102,7 @@ import {
 	DEFAULT_ZOOM_IN_DURATION_MS,
 	DEFAULT_ZOOM_MOTION_BLUR_TUNING,
 	DEFAULT_ZOOM_OUT_DURATION_MS,
+	WEBCAM_SILHOUETTE_COLOR,
 } from "./types";
 import { fromCursorSwaySliderValue, toCursorSwaySliderValue } from "./videoPlayback/cursorSway";
 import { isZeroPadding } from "./videoPlayback/layoutUtils";
@@ -4022,7 +4023,7 @@ export function SettingsPanel({
 									>
 										<span
 											className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-white/20"
-											style={{ backgroundColor: "#050505" }}
+											style={{ backgroundColor: WEBCAM_SILHOUETTE_COLOR }}
 										/>
 										{tSettings(
 											"effects.webcamPersonSilhouette",

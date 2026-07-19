@@ -6,13 +6,14 @@ import {
 	VideoCamera as Video,
 	VideoCameraSlash as VideoOff,
 } from "@phosphor-icons/react";
-import { useScopedT } from "@/contexts/I18nContext";
+import type { ReactElement } from "react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
+import { useScopedT } from "@/contexts/I18nContext";
 import type { WebcamEffectPipelineStatus } from "@/lib/webcamEffects";
-import { DropdownItem, HudPopover } from "./PopoverScaffold";
 import { useLaunchPopoverCoordinator } from "./LaunchPopoverCoordinator";
 import type { DeviceOption } from "./launchPopoverTypes";
-import type { ReactElement } from "react";
+import { DropdownItem, HudPopover } from "./PopoverScaffold";
 
 const POPOVER_ID = "webcam";
 
@@ -165,7 +166,10 @@ export function WebcamPopover({
 							{t("recording.personOriginal")}
 						</ToggleGroupItem>
 						<ToggleGroupItem value="silhouette" className="h-7 rounded text-[10px]">
-							<span className="mr-1 h-2.5 w-2.5 rounded-full bg-[#050505]" />
+							<span
+								className="mr-1 h-2.5 w-2.5 rounded-full"
+								style={{ backgroundColor: WEBCAM_SILHOUETTE_COLOR }}
+							/>
 							{t("recording.personSilhouette")}
 						</ToggleGroupItem>
 					</ToggleGroup>

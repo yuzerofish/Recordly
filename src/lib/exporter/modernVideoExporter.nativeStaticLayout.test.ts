@@ -748,7 +748,7 @@ describe("ModernVideoExporter native static-layout eligibility", () => {
 				height: 40,
 				effect: {
 					type: "silhouette",
-					silhouetteColor: "#050505",
+					silhouetteColor: "#000000",
 					opacity: 1,
 					feather: 6,
 					background: "transparent",

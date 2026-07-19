@@ -5,6 +5,7 @@ import {
 	ADVANCED_VERTICAL_PADDING_MAX,
 	DEFAULT_WEBCAM_EFFECT_SETTINGS,
 	DEFAULT_WEBCAM_OVERLAY,
+	WEBCAM_SILHOUETTE_COLOR,
 } from "./types";
 
 describe("normalizeProjectEditor", () => {
@@ -72,7 +73,7 @@ describe("normalizeProjectEditor", () => {
 
 		expect(editor.webcam.effect).toEqual({
 			type: "silhouette",
-			silhouetteColor: "#AABBCC",
+			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
 			opacity: 1,
 			feather: 0,
 			background: "blur",
@@ -93,7 +94,7 @@ describe("normalizeProjectEditor", () => {
 		expect(invalid.webcam.effect).toEqual(DEFAULT_WEBCAM_EFFECT_SETTINGS);
 	});
 
-	it("round-trips webcam effects through project JSON", () => {
+	it("round-trips webcam effects and migrates legacy silhouette colors to pure black", () => {
 		const effect = {
 			type: "silhouette" as const,
 			silhouetteColor: "#050505",
@@ -106,6 +107,9 @@ describe("normalizeProjectEditor", () => {
 		});
 		const parsed = JSON.parse(JSON.stringify(project)) as typeof project;
 
-		expect(normalizeProjectEditor(parsed.editor).webcam.effect).toEqual(effect);
+		expect(normalizeProjectEditor(parsed.editor).webcam.effect).toEqual({
+			...effect,
+			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+		});
 	});
 });

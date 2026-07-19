@@ -292,6 +292,8 @@ describe("CartoonFaceTracker", () => {
 
 describe("drawCartoonFace", () => {
 	it("draws two white eyes, two dark pupils, and a divided toothy smile", () => {
+		const fillStyles: string[] = [];
+		const strokeStyles: string[] = [];
 		const context = {
 			save: vi.fn(),
 			restore: vi.fn(),
@@ -308,8 +310,18 @@ describe("drawCartoonFace", () => {
 			stroke: vi.fn(),
 			clip: vi.fn(),
 			globalAlpha: 1,
-			fillStyle: "#000000",
-			strokeStyle: "#000000",
+			get fillStyle() {
+				return fillStyles.at(-1) ?? "#000000";
+			},
+			set fillStyle(value) {
+				fillStyles.push(String(value));
+			},
+			get strokeStyle() {
+				return strokeStyles.at(-1) ?? "#000000";
+			},
+			set strokeStyle(value) {
+				strokeStyles.push(String(value));
+			},
 			lineWidth: 1,
 		} as unknown as CanvasRenderingContext2D;
 		const layout = createCartoonFaceLayout(
@@ -330,5 +342,7 @@ describe("drawCartoonFace", () => {
 		expect(context.clip).toHaveBeenCalledTimes(1);
 		expect(context.lineTo).toHaveBeenCalledTimes(4);
 		expect(context.globalAlpha).toBe(0.75);
+		expect(fillStyles.filter((style) => style === "#000000")).toHaveLength(2);
+		expect(strokeStyles).toEqual(["#000000"]);
 	});
 });

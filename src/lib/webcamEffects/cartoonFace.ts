@@ -1,3 +1,4 @@
+import { WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
 import type { CartoonFaceEyeGeometry, CartoonFaceGeometry, NormalizedFacePoint } from "./messages";
 
 type DrawContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -401,7 +402,7 @@ function drawEye(context: DrawContext, eye: CartoonEyeLayout): void {
 	context.beginPath();
 	context.ellipse(eye.x, eye.y, eye.radiusX, eye.radiusY, 0, 0, Math.PI * 2);
 	context.fill();
-	context.fillStyle = "#050505";
+	context.fillStyle = WEBCAM_SILHOUETTE_COLOR;
 	context.beginPath();
 	context.arc(eye.pupilX, eye.pupilY, eye.pupilRadius, 0, Math.PI * 2);
 	context.fill();
@@ -419,7 +420,7 @@ export function drawCartoonFace(context: DrawContext, layout: CartoonFaceLayout)
 	traceSmile(context, layout.mouth);
 	context.fillStyle = "#FFFFFF";
 	context.fill();
-	context.strokeStyle = "#050505";
+	context.strokeStyle = WEBCAM_SILHOUETTE_COLOR;
 	context.lineWidth = Math.max(1, layout.mouth.width * 0.045);
 	context.stroke();
 

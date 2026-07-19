@@ -202,9 +202,12 @@ export const DEFAULT_WEBCAM_POSITION_X = 1;
 export const DEFAULT_WEBCAM_POSITION_Y = 1;
 export const DEFAULT_WEBCAM_TIME_OFFSET_MS = 0;
 
+// Keep the saved field for project compatibility, but the built-in effect is always pure black.
+export const WEBCAM_SILHOUETTE_COLOR = "#000000";
+
 export const DEFAULT_WEBCAM_EFFECT_SETTINGS: WebcamEffectSettings = {
 	type: "none",
-	silhouetteColor: "#050505",
+	silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
 	opacity: 1,
 	feather: 6,
 	background: "transparent",

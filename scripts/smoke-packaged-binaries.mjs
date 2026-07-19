@@ -102,7 +102,7 @@ function assertPackagedAppExecutable(unpackedRoot) {
 			"packaged app executable",
 			{ executable: true },
 		);
-		return;
+		return executablePath ?? path.join(appBundleDir, "Contents", "MacOS", productName);
 	}
 
 	const appDir = path.dirname(resourcesDir);
@@ -123,6 +123,7 @@ function assertPackagedAppExecutable(unpackedRoot) {
 	assertFile(executablePath ?? executableCandidates[0], "packaged app executable", {
 		executable: true,
 	});
+	return executablePath ?? executableCandidates[0];
 }
 
 function getNativeArchTag(platform = process.platform, arch = process.arch) {
@@ -141,10 +142,10 @@ function getNativeArchTag(platform = process.platform, arch = process.arch) {
 	return `${platform}-${arch}`;
 }
 
-function getRequiredArchTags() {
+function getRequiredArchTags(defaultArchTag) {
 	const configured = process.env.PACKAGED_SMOKE_ARCH_TAGS?.trim();
 	if (!configured) {
-		return [getNativeArchTag()];
+		return [defaultArchTag];
 	}
 
 	return [
@@ -155,6 +156,45 @@ function getRequiredArchTags() {
 				.filter(Boolean),
 		),
 	];
+}
+
+function getDarwinArchitectures(binaryPath) {
+	const output = execFileSync("lipo", ["-archs", binaryPath], {
+		encoding: "utf8",
+		timeout: 15000,
+	}).trim();
+	return output.split(/\s+/).filter(Boolean);
+}
+
+function assertDarwinBinaryArchitecture(binaryPath, archTag, label) {
+	if (process.platform !== "darwin" || !archTag.startsWith("darwin-")) {
+		return;
+	}
+
+	const expectedArchitecture = archTag === "darwin-arm64" ? "arm64" : "x86_64";
+	const architectures = getDarwinArchitectures(binaryPath);
+	if (!architectures.includes(expectedArchitecture)) {
+		fail(
+			`${label} does not include ${expectedArchitecture} at ${relativePath(binaryPath)} ` +
+				`(found: ${architectures.join(", ") || "none"})`,
+		);
+	}
+
+	console.log(`[packaged-smoke] ${label} architecture: ${architectures.join(", ")}`);
+}
+
+function getPackagedArchTag(executablePath) {
+	if (process.platform !== "darwin") {
+		return getNativeArchTag();
+	}
+
+	const architectures = getDarwinArchitectures(executablePath);
+	if (architectures.length !== 1) {
+		fail(`packaged app must have one target architecture, found: ${architectures.join(", ")}`);
+	}
+	if (architectures[0] === "arm64") return "darwin-arm64";
+	if (architectures[0] === "x86_64") return "darwin-x64";
+	fail(`unsupported packaged macOS architecture: ${architectures[0]}`);
 }
 
 function getExpectedNativeHelperFiles(archTag) {
@@ -214,11 +254,17 @@ function getExpectedNativeHelperFiles(archTag) {
 	return [];
 }
 
-function verifyFfmpeg(unpackedRoot) {
+function verifyFfmpeg(unpackedRoot, archTag) {
 	const binaryName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 	const ffmpegPath = path.join(unpackedRoot, "node_modules", "ffmpeg-static", binaryName);
 
 	assertFile(ffmpegPath, "packaged FFmpeg binary", { executable: true });
+	assertDarwinBinaryArchitecture(ffmpegPath, archTag, "packaged FFmpeg binary");
+
+	if (process.platform === "darwin" && archTag !== getNativeArchTag()) {
+		console.log(`[packaged-smoke] skipping cross-architecture FFmpeg execution for ${archTag}`);
+		return;
+	}
 
 	const output = execFileSync(ffmpegPath, ["-version"], {
 		encoding: "utf8",
@@ -233,13 +279,13 @@ function verifyFfmpeg(unpackedRoot) {
 	console.log(output.split(/\r?\n/, 1)[0]);
 }
 
-function verifyNativeHelpers(unpackedRoot) {
+function verifyNativeHelpers(unpackedRoot, defaultArchTag) {
 	const nativeBinRoot = path.join(unpackedRoot, "electron", "native", "bin");
 	if (!existsSync(nativeBinRoot)) {
 		fail(`native helper bin directory is missing at ${relativePath(nativeBinRoot)}`);
 	}
 
-	for (const archTag of getRequiredArchTags()) {
+	for (const archTag of getRequiredArchTags(defaultArchTag)) {
 		const archDir = path.join(nativeBinRoot, archTag);
 		if (!existsSync(archDir)) {
 			fail(`native helper arch directory is missing at ${relativePath(archDir)}`);
@@ -251,15 +297,30 @@ function verifyNativeHelpers(unpackedRoot) {
 		}
 
 		for (const expectedFile of expectedFiles) {
-			assertFile(
-				path.join(archDir, expectedFile.name),
-				`${expectedFile.label} (${archTag})`,
-				{
-					executable: expectedFile.executable,
-				},
-			);
+			const binaryPath = path.join(archDir, expectedFile.name);
+			assertFile(binaryPath, `${expectedFile.label} (${archTag})`, {
+				executable: expectedFile.executable,
+			});
+			if (expectedFile.executable) {
+				assertDarwinBinaryArchitecture(binaryPath, archTag, expectedFile.label);
+			}
 		}
 	}
+}
+
+function verifyUiohook(unpackedRoot, archTag) {
+	if (process.platform !== "darwin") return;
+
+	const binaryPath = path.join(
+		unpackedRoot,
+		"node_modules",
+		"uiohook-napi",
+		"build",
+		"Release",
+		"uiohook_napi.node",
+	);
+	assertFile(binaryPath, "packaged uiohook native module");
+	assertDarwinBinaryArchitecture(binaryPath, archTag, "packaged uiohook native module");
 }
 
 const unpackedRoots = findDirectoriesByName(releaseRoot, "app.asar.unpacked");
@@ -274,9 +335,12 @@ console.log(
 
 for (const unpackedRoot of unpackedRoots) {
 	console.log(`[packaged-smoke] root: ${relativePath(unpackedRoot)}`);
-	assertPackagedAppExecutable(unpackedRoot);
-	verifyFfmpeg(unpackedRoot);
-	verifyNativeHelpers(unpackedRoot);
+	const executablePath = assertPackagedAppExecutable(unpackedRoot);
+	const packagedArchTag = getPackagedArchTag(executablePath);
+	assertDarwinBinaryArchitecture(executablePath, packagedArchTag, "packaged app executable");
+	verifyFfmpeg(unpackedRoot, packagedArchTag);
+	verifyNativeHelpers(unpackedRoot, packagedArchTag);
+	verifyUiohook(unpackedRoot, packagedArchTag);
 }
 
 console.log("[packaged-smoke] packaged binary path smoke passed");

@@ -1,4 +1,7 @@
-import type { WebcamEffectSettings } from "@/components/video-editor/types";
+import {
+	WEBCAM_SILHOUETTE_COLOR,
+	type WebcamEffectSettings,
+} from "@/components/video-editor/types";
 import {
 	type CartoonFacePresentation,
 	createCartoonFaceLayout,
@@ -141,7 +144,7 @@ export class SilhouetteCompositor {
 		this.foregroundContext.save();
 		this.foregroundContext.clearRect(0, 0, width, height);
 		this.foregroundContext.globalAlpha = Math.max(0, Math.min(1, settings.opacity));
-		this.foregroundContext.fillStyle = settings.silhouetteColor;
+		this.foregroundContext.fillStyle = WEBCAM_SILHOUETTE_COLOR;
 		this.foregroundContext.fillRect(0, 0, width, height);
 		this.foregroundContext.globalAlpha = 1;
 		this.foregroundContext.globalCompositeOperation = "destination-in";
@@ -194,10 +197,9 @@ export function composeSilhouettePixels(
 	}
 
 	const output = new Uint8ClampedArray(source.length);
-	const color = /^#([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})$/i.exec(settings.silhouetteColor);
-	const red = color ? Number.parseInt(color[1], 16) : 5;
-	const green = color ? Number.parseInt(color[2], 16) : 5;
-	const blue = color ? Number.parseInt(color[3], 16) : 5;
+	const red = 0;
+	const green = 0;
+	const blue = 0;
 	const opacity = Math.max(0, Math.min(1, settings.opacity));
 
 	for (let index = 0; index < personMask.length; index++) {

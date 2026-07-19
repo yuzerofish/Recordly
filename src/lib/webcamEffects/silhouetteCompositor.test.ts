@@ -6,7 +6,7 @@ import { composeSilhouettePixels, SilhouetteCompositor } from "./silhouetteCompo
 
 const settings: WebcamEffectSettings = {
 	type: "silhouette",
-	silhouetteColor: "#050505",
+	silhouetteColor: "#FF00FF",
 	opacity: 1,
 	feather: 0,
 	background: "transparent",
@@ -85,7 +85,7 @@ describe("composeSilhouettePixels", () => {
 		const source = new Uint8ClampedArray([200, 120, 80, 255, 20, 40, 60, 255]);
 		const result = composeSilhouettePixels(source, new Float32Array([1, 0]), settings);
 
-		expect(Array.from(result)).toEqual([5, 5, 5, 255, 5, 5, 5, 0]);
+		expect(Array.from(result)).toEqual([0, 0, 0, 255, 0, 0, 0, 0]);
 	});
 
 	it("keeps silhouette RGB stable while applying opacity to alpha", () => {
@@ -95,7 +95,7 @@ describe("composeSilhouettePixels", () => {
 			{ ...settings, opacity: 0.5 },
 		);
 
-		expect(Array.from(result)).toEqual([5, 5, 5, 64]);
+		expect(Array.from(result)).toEqual([0, 0, 0, 64]);
 	});
 
 	it("renders an empty person mask fully transparent without source-pixel leakage", () => {
@@ -105,7 +105,7 @@ describe("composeSilhouettePixels", () => {
 			settings,
 		);
 
-		expect(Array.from(result)).toEqual([5, 5, 5, 0]);
+		expect(Array.from(result)).toEqual([0, 0, 0, 0]);
 	});
 
 	it("overlays the silhouette on an original background when requested", () => {
@@ -115,7 +115,7 @@ describe("composeSilhouettePixels", () => {
 			{ ...settings, opacity: 0.5, background: "original" },
 		);
 
-		expect(Array.from(result)).toEqual([105, 55, 30, 255]);
+		expect(Array.from(result)).toEqual([103, 53, 28, 255]);
 	});
 
 	it("rejects mismatched source and mask data", () => {

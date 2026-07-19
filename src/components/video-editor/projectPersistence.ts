@@ -75,8 +75,9 @@ import {
 	type Padding,
 	type SpeedRegion,
 	type TrimRegion,
-	type WebcamOverlaySettings,
+	WEBCAM_SILHOUETTE_COLOR,
 	type WebcamEffectSettings,
+	type WebcamOverlaySettings,
 	type ZoomMotionBlurTuning,
 	type ZoomRegion,
 	type ZoomTransitionEasing,
@@ -1012,10 +1013,7 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 					webcamEffect.type === "silhouette" || webcamEffect.type === "none"
 						? webcamEffect.type
 						: DEFAULT_WEBCAM_EFFECT_SETTINGS.type,
-				silhouetteColor: normalizeCursorClickEffectColor(
-					webcamEffect.silhouetteColor,
-					DEFAULT_WEBCAM_EFFECT_SETTINGS.silhouetteColor,
-				),
+				silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
 				opacity: isFiniteNumber(webcamEffect.opacity)
 					? clamp(webcamEffect.opacity, 0, 1)
 					: DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity,
