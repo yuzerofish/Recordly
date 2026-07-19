@@ -96,7 +96,7 @@ describe("editorPreferences", () => {
 		expect(normalized.webcam.effect).toEqual(DEFAULT_EDITOR_PREFERENCES.webcam.effect);
 	});
 
-	it("persists webcam silhouette settings", () => {
+	it("persists webcam silhouette mode while freezing appearance fields", () => {
 		const localStorage = createStorageMock();
 		vi.stubGlobal("localStorage", localStorage);
 		const effect = {
@@ -114,6 +114,8 @@ describe("editorPreferences", () => {
 		expect(loadEditorPreferences().webcam.effect).toEqual({
 			...effect,
 			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+			opacity: 1,
+			background: "transparent",
 		});
 	});
 

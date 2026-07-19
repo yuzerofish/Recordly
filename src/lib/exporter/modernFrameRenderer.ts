@@ -2543,6 +2543,7 @@ export class FrameRenderer {
 		liveSourceWidth: number,
 		liveSourceHeight: number,
 		canUseLiveSource: boolean,
+		allowCachedFallback = true,
 	): WebcamRenderSource | null {
 		if (canUseLiveSource && liveSource && liveSourceWidth > 0 && liveSourceHeight > 0) {
 			const usesDefaultCropRegion = isWebcamCropRegionDefault(this.config.webcam?.cropRegion);
@@ -2568,10 +2569,12 @@ export class FrameRenderer {
 			};
 		}
 
-		const cachedSource = this.getCachedWebcamRenderSource();
-		if (cachedSource) {
-			this.setWebcamRenderMode("cached");
-			return cachedSource;
+		if (allowCachedFallback) {
+			const cachedSource = this.getCachedWebcamRenderSource();
+			if (cachedSource) {
+				this.setWebcamRenderMode("cached");
+				return cachedSource;
+			}
 		}
 
 		if (canUseLiveSource && liveSource && liveSourceWidth > 0 && liveSourceHeight > 0) {
@@ -2842,8 +2845,9 @@ export class FrameRenderer {
 	}
 
 	private async prepareWebcamEffectFrame(targetTime: number): Promise<void> {
-		const effect = this.config.webcam?.effect;
-		if (effect?.type !== "silhouette") {
+		const webcam = this.config.webcam;
+		const effect = webcam?.effect;
+		if (!webcam?.enabled || effect?.type !== "silhouette") {
 			this.webcamEffectFrameSource = null;
 			return;
 		}
@@ -2851,12 +2855,12 @@ export class FrameRenderer {
 		const source = this.webcamDecodedFrame ?? this.webcamVideoElement;
 		if (!source) {
 			this.webcamEffectFrameSource = null;
-			return;
+			throw new Error("Black silhouette export failed: webcam frame is unavailable");
 		}
 		const dimensions = this.getWebcamSourceDimensions(source);
 		if (dimensions.width <= 0 || dimensions.height <= 0) {
 			this.webcamEffectFrameSource = null;
-			return;
+			throw new Error("Black silhouette export failed: webcam frame has no dimensions");
 		}
 
 		this.webcamEffectPipeline ??= new WebcamEffectPipeline();
@@ -2867,7 +2871,13 @@ export class FrameRenderer {
 			settings: effect,
 			mode: "export",
 		});
-		this.webcamEffectFrameSource = result.processed ? result.source : null;
+		if (!result.processed) {
+			this.webcamEffectFrameSource = null;
+			throw new Error(
+				`Black silhouette export failed: ${result.error ?? `effect status is ${result.status}`}`,
+			);
+		}
+		this.webcamEffectFrameSource = result.source;
 	}
 
 	private updateWebcamOverlay(referenceTimeSeconds = this.currentVideoTime): void {
@@ -2882,7 +2892,10 @@ export class FrameRenderer {
 		}
 
 		const rawWebcamSource = this.webcamDecodedFrame ?? this.webcamVideoElement;
-		const webcamSource = this.webcamEffectFrameSource ?? rawWebcamSource;
+		const requiresProcessedEffect = webcam.effect?.type === "silhouette";
+		const webcamSource = requiresProcessedEffect
+			? this.webcamEffectFrameSource
+			: (this.webcamEffectFrameSource ?? rawWebcamSource);
 		const liveSourceDimensions = rawWebcamSource
 			? this.getWebcamSourceDimensions(rawWebcamSource)
 			: { width: 0, height: 0 };
@@ -2911,6 +2924,7 @@ export class FrameRenderer {
 			liveSourceDimensions.width,
 			liveSourceDimensions.height,
 			canUseLiveSource,
+			!requiresProcessedEffect,
 		);
 
 		if (!renderableWebcamSource) {
@@ -3012,8 +3026,8 @@ export class FrameRenderer {
 
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
 			await this.syncWebcamFrame(webcamRenderTimeSeconds);
-			await this.prepareWebcamEffectFrame(webcamRenderTimeSeconds);
 		}
+		await this.prepareWebcamEffectFrame(webcamRenderTimeSeconds);
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
 			await this.syncBackgroundFrame(Math.max(0, backgroundTimelineTimestamp / 1_000_000));
@@ -3267,8 +3281,8 @@ export class FrameRenderer {
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
 			const targetTime = Math.max(0, this.currentVideoTime);
 			await this.syncWebcamFrame(targetTime);
-			await this.prepareWebcamEffectFrame(targetTime);
 		}
+		await this.prepareWebcamEffectFrame(Math.max(0, this.currentVideoTime));
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
 			await this.syncBackgroundFrame(Math.max(0, backgroundTimelineTimestamp / 1_000_000));

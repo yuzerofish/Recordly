@@ -603,6 +603,11 @@ export class WebcamEffectPipeline {
 			return { source: request.source, processed: false, status: this.status };
 		}
 		if (this.disposed) {
+			if (request.mode === "export") {
+				throw new Error(
+					"Black silhouette export failed: webcam effect pipeline is disposed",
+				);
+			}
 			return {
 				source: request.source,
 				processed: false,
@@ -747,6 +752,9 @@ export class WebcamEffectPipeline {
 			this.status = "fallback";
 			this.error = message;
 			this.clearCachedInference();
+			if (request.mode === "export") {
+				throw new Error(`Black silhouette export failed: ${message}`);
+			}
 			return {
 				source: request.source,
 				processed: false,

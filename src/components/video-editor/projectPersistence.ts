@@ -75,7 +75,9 @@ import {
 	type Padding,
 	type SpeedRegion,
 	type TrimRegion,
+	WEBCAM_SILHOUETTE_BACKGROUND,
 	WEBCAM_SILHOUETTE_COLOR,
+	WEBCAM_SILHOUETTE_OPACITY,
 	type WebcamEffectSettings,
 	type WebcamOverlaySettings,
 	type ZoomMotionBlurTuning,
@@ -1014,18 +1016,11 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 						? webcamEffect.type
 						: DEFAULT_WEBCAM_EFFECT_SETTINGS.type,
 				silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
-				opacity: isFiniteNumber(webcamEffect.opacity)
-					? clamp(webcamEffect.opacity, 0, 1)
-					: DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity,
+				opacity: WEBCAM_SILHOUETTE_OPACITY,
 				feather: isFiniteNumber(webcamEffect.feather)
 					? clamp(webcamEffect.feather, 0, 20)
 					: DEFAULT_WEBCAM_EFFECT_SETTINGS.feather,
-				background:
-					webcamEffect.background === "transparent" ||
-					webcamEffect.background === "original" ||
-					webcamEffect.background === "blur"
-						? webcamEffect.background
-						: DEFAULT_WEBCAM_EFFECT_SETTINGS.background,
+				background: WEBCAM_SILHOUETTE_BACKGROUND,
 			},
 			cropRegion: normalizeWebcamCropRegion(webcam.cropRegion),
 			positionPreset:

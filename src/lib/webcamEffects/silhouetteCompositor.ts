@@ -130,20 +130,11 @@ export class SilhouetteCompositor {
 		this.maskContext.clearRect(0, 0, mask.width, mask.height);
 		writeMaskImageData(this.maskContext, mask);
 
-		this.outputContext.save();
 		this.outputContext.clearRect(0, 0, width, height);
-		if (settings.background === "original") {
-			this.outputContext.drawImage(source, 0, 0, width, height);
-		} else if (settings.background === "blur") {
-			this.outputContext.filter = `blur(${Math.max(0, settings.feather * 1.5)}px)`;
-			this.outputContext.drawImage(source, 0, 0, width, height);
-			this.outputContext.filter = "none";
-		}
-		this.outputContext.restore();
 
 		this.foregroundContext.save();
 		this.foregroundContext.clearRect(0, 0, width, height);
-		this.foregroundContext.globalAlpha = Math.max(0, Math.min(1, settings.opacity));
+		this.foregroundContext.globalAlpha = 1;
 		this.foregroundContext.fillStyle = WEBCAM_SILHOUETTE_COLOR;
 		this.foregroundContext.fillRect(0, 0, width, height);
 		this.foregroundContext.globalAlpha = 1;
@@ -158,16 +149,11 @@ export class SilhouetteCompositor {
 		this.faceContext.save();
 		this.faceContext.clearRect(0, 0, width, height);
 		if (face) {
-			const effectOpacity = Math.max(0, Math.min(1, settings.opacity));
 			const clipToPerson = !face.isFading || faceOverlapsPersonMask(mask, face);
 			const trackedPresentation = clipToPerson
 				? face
 				: { ...face, opacity: Math.min(face.opacity, face.unmaskedOpacity) };
-			const presentation = {
-				...trackedPresentation,
-				opacity: trackedPresentation.opacity * effectOpacity,
-			};
-			const layout = createCartoonFaceLayout(presentation, width, height);
+			const layout = createCartoonFaceLayout(trackedPresentation, width, height);
 			if (layout) drawCartoonFace(this.faceContext, layout);
 			// If the person mask disappears too, only deterministic artwork remains
 			// and it uses the shorter unmasked fade instead of leaving a full-bright
@@ -190,7 +176,7 @@ export class SilhouetteCompositor {
 export function composeSilhouettePixels(
 	source: Uint8ClampedArray,
 	personMask: Float32Array,
-	settings: WebcamEffectSettings,
+	_settings: WebcamEffectSettings,
 ): Uint8ClampedArray {
 	if (source.length !== personMask.length * 4) {
 		throw new Error("Source pixels and person mask dimensions do not match");
@@ -200,29 +186,14 @@ export function composeSilhouettePixels(
 	const red = 0;
 	const green = 0;
 	const blue = 0;
-	const opacity = Math.max(0, Math.min(1, settings.opacity));
 
 	for (let index = 0; index < personMask.length; index++) {
 		const offset = index * 4;
 		const maskAlpha = Math.max(0, Math.min(1, personMask[index] ?? 0));
-		const personAlpha = maskAlpha * opacity;
-		if (settings.background === "transparent") {
-			output[offset] = red;
-			output[offset + 1] = green;
-			output[offset + 2] = blue;
-			output[offset + 3] = Math.round(personAlpha * 255);
-			continue;
-		}
-
-		const inverseAlpha = 1 - personAlpha;
-		output[offset] = Math.round(red * personAlpha + (source[offset] ?? 0) * inverseAlpha);
-		output[offset + 1] = Math.round(
-			green * personAlpha + (source[offset + 1] ?? 0) * inverseAlpha,
-		);
-		output[offset + 2] = Math.round(
-			blue * personAlpha + (source[offset + 2] ?? 0) * inverseAlpha,
-		);
-		output[offset + 3] = source[offset + 3] ?? 255;
+		output[offset] = red;
+		output[offset + 1] = green;
+		output[offset + 2] = blue;
+		output[offset + 3] = Math.round(maskAlpha * 255);
 	}
 
 	return output;

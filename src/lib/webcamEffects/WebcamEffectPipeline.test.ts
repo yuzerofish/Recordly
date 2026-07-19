@@ -243,23 +243,18 @@ describe("WebcamEffectPipeline", () => {
 		);
 	});
 
-	it("falls back to the original frame when required face tracking cannot initialize", async () => {
+	it("rejects export when required face tracking cannot initialize", async () => {
 		const harness = createHarness();
 		harness.faceWorker.failInitialization = true;
 
-		const result = await harness.pipeline.processFrame({
-			source,
-			timestampMs: 100,
-			settings: silhouette,
-			mode: "export",
-		});
-
-		expect(result).toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "face model unavailable",
-		});
+		await expect(
+			harness.pipeline.processFrame({
+				source,
+				timestampMs: 100,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).rejects.toThrow("Black silhouette export failed: face model unavailable");
 		expect(harness.compositor.compose).not.toHaveBeenCalled();
 		expect(harness.worker.terminated).toBe(true);
 		expect(harness.faceWorker.terminated).toBe(true);
@@ -411,67 +406,54 @@ describe("WebcamEffectPipeline", () => {
 		expect(snapshot.close).toHaveBeenCalledTimes(1);
 	});
 
-	it("falls back instead of exporting a partial effect when the frozen frame cannot be cloned", async () => {
+	it("rejects export when the frozen frame cannot be cloned", async () => {
 		const harness = createHarness();
 		harness.createBitmap
 			.mockResolvedValueOnce(harness.bitmap)
 			.mockRejectedValueOnce(new Error("clone failed"));
 
-		const result = await harness.pipeline.processFrame({
-			source,
-			timestampMs: 300,
-			settings: silhouette,
-			mode: "export",
-		});
-
-		expect(result).toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "Could not clone the frozen frame for face tracking: clone failed",
-		});
+		await expect(
+			harness.pipeline.processFrame({
+				source,
+				timestampMs: 300,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).rejects.toThrow(
+			"Black silhouette export failed: Could not clone the frozen frame for face tracking: clone failed",
+		);
 		expect(harness.bitmap.close).toHaveBeenCalledTimes(1);
 		expect(harness.compositor.compose).not.toHaveBeenCalled();
 	});
 
-	it("keeps a fatal face worker crash in fallback after the matching mask arrives", async () => {
+	it("rejects export after a fatal face worker crash", async () => {
 		const harness = createHarness();
 		harness.faceWorker.crashOnTrack = true;
 
-		const result = await harness.pipeline.processFrame({
-			source,
-			timestampMs: 350,
-			settings: silhouette,
-			mode: "export",
-		});
-
-		expect(result).toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "face worker crashed",
-		});
+		await expect(
+			harness.pipeline.processFrame({
+				source,
+				timestampMs: 350,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).rejects.toThrow("Black silhouette export failed: face worker crashed");
 		expect(harness.faceWorker.terminated).toBe(true);
 		expect(harness.compositor.compose).not.toHaveBeenCalled();
 	});
 
-	it("falls back on a request-scoped face inference error instead of emitting a partial effect", async () => {
+	it("rejects export on a request-scoped face inference error", async () => {
 		const harness = createHarness();
 		harness.faceWorker.failTracks = true;
 
-		const result = await harness.pipeline.processFrame({
-			source,
-			timestampMs: 375,
-			settings: silhouette,
-			mode: "export",
-		});
-
-		expect(result).toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "face inference failed",
-		});
+		await expect(
+			harness.pipeline.processFrame({
+				source,
+				timestampMs: 375,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).rejects.toThrow("Black silhouette export failed: face inference failed");
 		expect(harness.compositor.compose).not.toHaveBeenCalled();
 	});
 
@@ -561,12 +543,9 @@ describe("WebcamEffectPipeline", () => {
 		} as MessageEvent<SegmentationWorkerResponse>);
 		harness.faceWorker.resolveTrack(track.requestId, 410);
 
-		await expect(pending).resolves.toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "segmentation worker crashed",
-		});
+		await expect(pending).rejects.toThrow(
+			"Black silhouette export failed: segmentation worker crashed",
+		);
 		expect(harness.worker.terminated).toBe(true);
 		expect(harness.faceWorker.terminated).toBe(true);
 		expect(harness.pipeline.getStatus()).toEqual({
@@ -1059,7 +1038,7 @@ describe("WebcamEffectPipeline", () => {
 		expect(finalFrame.close).toHaveBeenCalledTimes(1);
 	});
 
-	it("returns the raw frame instead of reusing a stale mask after inference fails", async () => {
+	it("rejects export instead of reusing a stale mask or raw frame after inference fails", async () => {
 		const harness = createHarness();
 		await harness.pipeline.processFrame({
 			source,
@@ -1069,19 +1048,14 @@ describe("WebcamEffectPipeline", () => {
 		});
 		harness.worker.failSegments = true;
 
-		const failed = await harness.pipeline.processFrame({
-			source,
-			timestampMs: 2000,
-			settings: silhouette,
-			mode: "export",
-		});
-
-		expect(failed).toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "segmentation failed",
-		});
+		await expect(
+			harness.pipeline.processFrame({
+				source,
+				timestampMs: 2000,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).rejects.toThrow("Black silhouette export failed: segmentation failed");
 		expect(harness.compositor.compose).toHaveBeenCalledTimes(1);
 	});
 
@@ -1100,12 +1074,9 @@ describe("WebcamEffectPipeline", () => {
 
 		harness.pipeline.dispose();
 
-		await expect(pending).resolves.toMatchObject({
-			source,
-			processed: false,
-			status: "fallback",
-			error: "Webcam effect pipeline was disposed",
-		});
+		await expect(pending).rejects.toThrow(
+			"Black silhouette export failed: Webcam effect pipeline was disposed",
+		);
 		expect(harness.worker.terminated).toBe(true);
 		expect(harness.faceWorker.terminated).toBe(true);
 	});
@@ -1122,13 +1093,13 @@ describe("WebcamEffectPipeline", () => {
 
 		expect(harness.worker.terminated).toBe(true);
 		expect(harness.faceWorker.terminated).toBe(true);
-		expect(
-			await harness.pipeline.processFrame({
+		await expect(
+			harness.pipeline.processFrame({
 				source,
 				timestampMs: 1,
 				settings: silhouette,
 				mode: "export",
 			}),
-		).toMatchObject({ processed: false, status: "fallback" });
+		).rejects.toThrow("Black silhouette export failed: webcam effect pipeline is disposed");
 	});
 });

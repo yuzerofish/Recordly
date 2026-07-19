@@ -1,8 +1,63 @@
 import * as fc from "fast-check";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_WEBCAM_OVERLAY } from "@/components/video-editor/types";
+
+const {
+	decodeAllMock,
+	destroyDecoderMock,
+	destroyRendererMock,
+	gifAbortMock,
+	gifAddFrameMock,
+	gifRenderMock,
+	getEffectiveDurationMock,
+	initializeRendererMock,
+	loadMetadataMock,
+	renderFrameMock,
+} = vi.hoisted(() => ({
+	decodeAllMock: vi.fn(),
+	destroyDecoderMock: vi.fn(),
+	destroyRendererMock: vi.fn(),
+	gifAbortMock: vi.fn(),
+	gifAddFrameMock: vi.fn(),
+	gifRenderMock: vi.fn(),
+	getEffectiveDurationMock: vi.fn(),
+	initializeRendererMock: vi.fn(),
+	loadMetadataMock: vi.fn(),
+	renderFrameMock: vi.fn(),
+}));
+
+vi.mock("gif.js", () => ({
+	default: class {
+		abort = gifAbortMock;
+		addFrame = gifAddFrameMock;
+		on = vi.fn();
+		render = gifRenderMock;
+	},
+}));
+
+vi.mock("./frameRenderer", () => ({
+	FrameRenderer: class {
+		destroy = destroyRendererMock;
+		getCanvas = vi.fn(() => ({}));
+		initialize = initializeRendererMock;
+		renderFrame = renderFrameMock;
+	},
+}));
+
+vi.mock("./streamingDecoder", () => ({
+	StreamingVideoDecoder: class {
+		cancel = vi.fn();
+		decodeAll = decodeAllMock;
+		destroy = destroyDecoderMock;
+		getEffectiveDuration = getEffectiveDurationMock;
+		loadMetadata = loadMetadataMock;
+	},
+}));
+
 import {
 	buildGifFrameRendererConfig,
 	calculateOutputDimensions,
+	GifExporter,
 	getGifRepeat,
 	trimGifTrailingPadding,
 } from "./gifExporter";
@@ -20,6 +75,71 @@ import { GIF_SIZE_PRESETS, GifSizePreset } from "./types";
  * Feature: gif-export, Property 2: Loop Encoding Correctness
  */
 describe("GIF Exporter", () => {
+	describe("failure propagation", () => {
+		beforeEach(() => {
+			vi.clearAllMocks();
+			loadMetadataMock.mockResolvedValue({
+				width: 1920,
+				height: 1080,
+				duration: 1,
+			});
+			getEffectiveDurationMock.mockReturnValue(1);
+			initializeRendererMock.mockResolvedValue(undefined);
+			decodeAllMock.mockImplementation(
+				async (
+					_frameRate: number,
+					_trimRegions: unknown,
+					_speedRegions: unknown,
+					onFrame: (...args: unknown[]) => Promise<void>,
+				) => {
+					await onFrame({}, 0, 0, 0);
+				},
+			);
+		});
+
+		it("returns failure without producing a GIF when silhouette rendering fails", async () => {
+			const effectError = new Error("Black silhouette export failed: face model unavailable");
+			renderFrameMock.mockRejectedValue(effectError);
+			const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+			const exporter = new GifExporter({
+				videoUrl: "file:///recording.mp4",
+				width: 1920,
+				height: 1080,
+				frameRate: 30,
+				loop: true,
+				sizePreset: "original",
+				wallpaper: "#101010",
+				zoomRegions: [],
+				showShadow: false,
+				shadowIntensity: 0,
+				backgroundBlur: 0,
+				cropRegion: { x: 0, y: 0, width: 1, height: 1 },
+				webcam: {
+					...DEFAULT_WEBCAM_OVERLAY,
+					enabled: true,
+					effect: {
+						...DEFAULT_WEBCAM_OVERLAY.effect,
+						type: "silhouette",
+					},
+				},
+				webcamUrl: "file:///webcam.mp4",
+			});
+
+			try {
+				await expect(exporter.export()).resolves.toEqual({
+					success: false,
+					error: effectError.message,
+				});
+				expect(gifAddFrameMock).not.toHaveBeenCalled();
+				expect(gifRenderMock).not.toHaveBeenCalled();
+				expect(destroyRendererMock).toHaveBeenCalledTimes(1);
+				expect(destroyDecoderMock).toHaveBeenCalledTimes(1);
+			} finally {
+				consoleError.mockRestore();
+			}
+		});
+	});
+
 	describe("output normalization", () => {
 		it("removes zero-filled gif.js page padding after the trailer", async () => {
 			const blob = new Blob(
@@ -293,6 +413,42 @@ describe("Property 3: Size Preset Resolution Mapping", () => {
 });
 
 describe("GIF renderer config", () => {
+	it("forwards the exact silhouette settings and webcam source into the shared renderer", () => {
+		const webcam = {
+			...DEFAULT_WEBCAM_OVERLAY,
+			enabled: true,
+			mirror: true,
+			cropRegion: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 },
+			effect: {
+				...DEFAULT_WEBCAM_OVERLAY.effect,
+				type: "silhouette" as const,
+			},
+		};
+		const config = buildGifFrameRendererConfig(
+			{
+				videoUrl: "file:///recording.mp4",
+				width: 1920,
+				height: 1080,
+				frameRate: 30,
+				loop: true,
+				sizePreset: "original",
+				wallpaper: "#101010",
+				zoomRegions: [],
+				showShadow: false,
+				shadowIntensity: 0,
+				backgroundBlur: 0,
+				cropRegion: { x: 0, y: 0, width: 1, height: 1 },
+				webcam,
+				webcamUrl: "file:///webcam.mp4",
+			} as never,
+			{ width: 1920, height: 1080 },
+		);
+
+		expect(config.webcam).toBe(webcam);
+		expect(config.webcamUrl).toBe("file:///webcam.mp4");
+		expect(config.webcam?.effect.type).toBe("silhouette");
+	});
+
 	it("forwards cursor click-effect settings into the frame renderer config", () => {
 		const config = buildGifFrameRendererConfig(
 			{

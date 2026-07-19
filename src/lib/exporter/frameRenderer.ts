@@ -1418,8 +1418,9 @@ export class FrameRenderer {
 	}
 
 	private async prepareWebcamEffectFrame(targetTime: number): Promise<void> {
-		const effect = this.config.webcam?.effect;
-		if (effect?.type !== "silhouette") {
+		const webcam = this.config.webcam;
+		const effect = webcam?.effect;
+		if (!webcam?.enabled || effect?.type !== "silhouette") {
 			this.webcamEffectFrameSource = null;
 			return;
 		}
@@ -1427,7 +1428,7 @@ export class FrameRenderer {
 		const source = this.webcamDecodedFrame ?? this.webcamVideoElement;
 		if (!source) {
 			this.webcamEffectFrameSource = null;
-			return;
+			throw new Error("Black silhouette export failed: webcam frame is unavailable");
 		}
 		const sourceWidth =
 			this.webcamDecodedFrame?.displayWidth ?? this.webcamVideoElement?.videoWidth ?? 0;
@@ -1435,7 +1436,7 @@ export class FrameRenderer {
 			this.webcamDecodedFrame?.displayHeight ?? this.webcamVideoElement?.videoHeight ?? 0;
 		if (sourceWidth <= 0 || sourceHeight <= 0) {
 			this.webcamEffectFrameSource = null;
-			return;
+			throw new Error("Black silhouette export failed: webcam frame has no dimensions");
 		}
 
 		this.webcamEffectPipeline ??= new WebcamEffectPipeline();
@@ -1446,7 +1447,13 @@ export class FrameRenderer {
 			settings: effect,
 			mode: "export",
 		});
-		this.webcamEffectFrameSource = result.processed ? result.source : null;
+		if (!result.processed) {
+			this.webcamEffectFrameSource = null;
+			throw new Error(
+				`Black silhouette export failed: ${result.error ?? `effect status is ${result.status}`}`,
+			);
+		}
+		this.webcamEffectFrameSource = result.source;
 	}
 
 	private async setupFrame(): Promise<void> {
@@ -1652,8 +1659,8 @@ export class FrameRenderer {
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
 			const targetTime = Math.max(0, this.currentVideoTime);
 			await this.syncWebcamFrame(targetTime);
-			await this.prepareWebcamEffectFrame(targetTime);
 		}
+		await this.prepareWebcamEffectFrame(Math.max(0, this.currentVideoTime));
 
 		// Sync video wallpaper frame
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
@@ -2113,8 +2120,8 @@ export class FrameRenderer {
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
 			const targetTime = Math.max(0, this.currentVideoTime);
 			await this.syncWebcamFrame(targetTime);
-			await this.prepareWebcamEffectFrame(targetTime);
 		}
+		await this.prepareWebcamEffectFrame(Math.max(0, this.currentVideoTime));
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
 			await this.syncBackgroundFrame(Math.max(0, backgroundTimelineTimestamp / 1_000_000));
@@ -2379,6 +2386,10 @@ export class FrameRenderer {
 		if (!webcam?.enabled || (!webcamDecodedFrame && !webcamVideo)) {
 			return;
 		}
+		const requiresProcessedEffect = webcam.effect?.type === "silhouette";
+		if (requiresProcessedEffect && !this.webcamEffectFrameSource) {
+			return;
+		}
 
 		const hasCachedWebcamFrame = Boolean(
 			this.webcamFrameCacheCanvas &&
@@ -2413,6 +2424,7 @@ export class FrameRenderer {
 		});
 
 		const canRefreshCache =
+			!requiresProcessedEffect &&
 			hasLiveWebcamFrame &&
 			this.lastSyncedWebcamTime !== null &&
 			Math.abs(this.lastSyncedWebcamTime - expectedWebcamTargetTime) <= 0.02 &&
@@ -2458,10 +2470,11 @@ export class FrameRenderer {
 			);
 		}
 
-		const webcamFrameSource =
-			this.webcamEffectFrameSource ??
-			this.webcamFrameCacheCanvas ??
-			(hasLiveWebcamFrame ? (webcamDecodedFrame ?? webcamVideo) : null);
+		const webcamFrameSource = requiresProcessedEffect
+			? this.webcamEffectFrameSource
+			: (this.webcamEffectFrameSource ??
+				this.webcamFrameCacheCanvas ??
+				(hasLiveWebcamFrame ? (webcamDecodedFrame ?? webcamVideo) : null));
 		if (!webcamFrameSource) {
 			return;
 		}

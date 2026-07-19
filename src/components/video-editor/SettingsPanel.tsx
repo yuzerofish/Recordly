@@ -1954,6 +1954,9 @@ export function SettingsPanel({
 				...DEFAULT_WEBCAM_EFFECT_SETTINGS,
 				...webcam.effect,
 				...patch,
+				silhouetteColor: DEFAULT_WEBCAM_EFFECT_SETTINGS.silhouetteColor,
+				opacity: DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity,
+				background: DEFAULT_WEBCAM_EFFECT_SETTINGS.background,
 			},
 		});
 	};
@@ -4033,85 +4036,23 @@ export function SettingsPanel({
 								</ToggleGroup>
 							</div>
 							{webcam?.effect?.type === "silhouette" ? (
-								<>
-									<SliderControl
-										label={tSettings(
-											"effects.webcamSilhouetteIntensity",
-											"Intensity",
-										)}
-										value={(webcam.effect.opacity ?? 1) * 100}
-										defaultValue={DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity * 100}
-										min={0}
-										max={100}
-										step={1}
-										onChange={(value) =>
-											updateWebcamEffect({ opacity: value / 100 })
-										}
-										formatValue={(value) => `${Math.round(value)}%`}
-										parseInput={(text) => parseFloat(text.replace(/%$/, ""))}
-									/>
-									<SliderControl
-										label={tSettings(
-											"effects.webcamSilhouetteEdge",
-											"Edge softness",
-										)}
-										value={
-											webcam.effect.feather ??
-											DEFAULT_WEBCAM_EFFECT_SETTINGS.feather
-										}
-										defaultValue={DEFAULT_WEBCAM_EFFECT_SETTINGS.feather}
-										min={0}
-										max={20}
-										step={1}
-										onChange={(feather) => updateWebcamEffect({ feather })}
-										formatValue={(value) => `${Math.round(value)}px`}
-										parseInput={(text) => parseFloat(text.replace(/px$/, ""))}
-									/>
-									<div className="flex items-center justify-between rounded-lg bg-foreground/[0.03] px-2.5 py-1.5">
-										<span className="text-[10px] text-muted-foreground">
-											{tSettings(
-												"effects.webcamSilhouetteBackground",
-												"Background",
-											)}
-										</span>
-										<Select
-											value={webcam.effect.background}
-											onValueChange={(background) => {
-												if (
-													background === "transparent" ||
-													background === "original" ||
-													background === "blur"
-												) {
-													updateWebcamEffect({ background });
-												}
-											}}
-										>
-											<SelectTrigger className="h-7 w-28 border-foreground/10 bg-foreground/[0.03] text-[10px]">
-												<SelectValue />
-											</SelectTrigger>
-											<SelectContent>
-												<SelectItem value="transparent">
-													{tSettings(
-														"effects.webcamBackgroundTransparent",
-														"Transparent",
-													)}
-												</SelectItem>
-												<SelectItem value="original">
-													{tSettings(
-														"effects.webcamBackgroundOriginal",
-														"Original",
-													)}
-												</SelectItem>
-												<SelectItem value="blur">
-													{tSettings(
-														"effects.webcamBackgroundBlur",
-														"Blurred",
-													)}
-												</SelectItem>
-											</SelectContent>
-										</Select>
-									</div>
-								</>
+								<SliderControl
+									label={tSettings(
+										"effects.webcamSilhouetteEdge",
+										"Edge softness",
+									)}
+									value={
+										webcam.effect.feather ??
+										DEFAULT_WEBCAM_EFFECT_SETTINGS.feather
+									}
+									defaultValue={DEFAULT_WEBCAM_EFFECT_SETTINGS.feather}
+									min={0}
+									max={20}
+									step={1}
+									onChange={(feather) => updateWebcamEffect({ feather })}
+									formatValue={(value) => `${Math.round(value)}px`}
+									parseInput={(text) => parseFloat(text.replace(/px$/, ""))}
+								/>
 							) : null}
 							<SliderControl
 								label={tSettings("effects.webcamWidth", "Webcam Width")}

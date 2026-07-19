@@ -551,6 +551,82 @@ describe("FrameRenderer webcam export path", () => {
 		expect(outputContext.drawImage).toHaveBeenCalledWith(bubbleCanvas, 900, 484, 360, 216);
 	});
 
+	it("rejects an unprocessed silhouette frame instead of exporting the raw webcam", async () => {
+		const renderer = createRenderer() as any;
+		const webcamVideo = new FakeVideoElement({
+			currentTime: 3.25,
+			readyState: 2,
+			videoWidth: 1000,
+			videoHeight: 500,
+		});
+		renderer.config.webcam = {
+			...DEFAULT_WEBCAM_OVERLAY,
+			enabled: true,
+			effect: { ...DEFAULT_WEBCAM_OVERLAY.effect, type: "silhouette" },
+		};
+		renderer.webcamVideoElement = webcamVideo;
+		renderer.lastSyncedWebcamTime = 3.25;
+		renderer.webcamEffectPipeline = {
+			dispose: vi.fn(),
+			processFrame: vi.fn(async () => ({
+				processed: false,
+				source: webcamVideo,
+				status: "fallback",
+				error: "face model unavailable",
+			})),
+		};
+
+		await expect(renderer.prepareWebcamEffectFrame(9)).rejects.toThrow(
+			"Black silhouette export failed: face model unavailable",
+		);
+		expect(renderer.webcamEffectFrameSource).toBeNull();
+	});
+
+	it("rejects an enabled silhouette export when the webcam source is unavailable", async () => {
+		const renderer = createRenderer() as any;
+		renderer.config.webcam = {
+			...DEFAULT_WEBCAM_OVERLAY,
+			enabled: true,
+			effect: { ...DEFAULT_WEBCAM_OVERLAY.effect, type: "silhouette" },
+		};
+		renderer.webcamDecodedFrame = null;
+		renderer.webcamVideoElement = null;
+
+		await expect(renderer.prepareWebcamEffectFrame(9)).rejects.toThrow(
+			"Black silhouette export failed: webcam frame is unavailable",
+		);
+	});
+
+	it("never selects a raw or cached frame while silhouette output is unavailable", () => {
+		const renderer = createRenderer() as any;
+		const outputContext = createMockContext();
+		const webcamVideo = new FakeVideoElement({
+			currentTime: 2,
+			readyState: 2,
+			videoWidth: 800,
+			videoHeight: 600,
+		});
+		const rawCache = createMockCanvas();
+		rawCache.width = 800;
+		rawCache.height = 600;
+		renderer.config.webcam = {
+			...DEFAULT_WEBCAM_OVERLAY,
+			enabled: true,
+			effect: { ...DEFAULT_WEBCAM_OVERLAY.effect, type: "silhouette" },
+		};
+		renderer.webcamVideoElement = webcamVideo;
+		renderer.webcamFrameCacheCanvas = rawCache;
+		renderer.webcamFrameCacheCtx = rawCache.context;
+		renderer.webcamEffectFrameSource = null;
+		renderer.lastSyncedWebcamTime = 2;
+		renderer.currentVideoTime = 2;
+
+		renderer.drawWebcamOverlay(outputContext as unknown as CanvasRenderingContext2D, 1280, 720);
+
+		expect((outputContext as MockContext).drawImage).not.toHaveBeenCalled();
+		expect((rawCache.context as MockContext).drawImage).not.toHaveBeenCalled();
+	});
+
 	it("reuses the webcam bubble canvas across frames", () => {
 		const renderer = createRenderer() as unknown as FrameRendererTestAccess;
 		const outputContext = createMockContext();

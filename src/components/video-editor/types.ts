@@ -202,15 +202,19 @@ export const DEFAULT_WEBCAM_POSITION_X = 1;
 export const DEFAULT_WEBCAM_POSITION_Y = 1;
 export const DEFAULT_WEBCAM_TIME_OFFSET_MS = 0;
 
-// Keep the saved field for project compatibility, but the built-in effect is always pure black.
+// Keep the saved fields for project compatibility, but the built-in effect is a
+// frozen pure-black person layer on transparency. Legacy intensity/background
+// values must never reveal camera pixels while silhouette mode is active.
 export const WEBCAM_SILHOUETTE_COLOR = "#000000";
+export const WEBCAM_SILHOUETTE_OPACITY = 1;
+export const WEBCAM_SILHOUETTE_BACKGROUND = "transparent" as const;
 
 export const DEFAULT_WEBCAM_EFFECT_SETTINGS: WebcamEffectSettings = {
 	type: "none",
 	silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
-	opacity: 1,
+	opacity: WEBCAM_SILHOUETTE_OPACITY,
 	feather: 6,
-	background: "transparent",
+	background: WEBCAM_SILHOUETTE_BACKGROUND,
 };
 
 export const DEFAULT_WEBCAM_OVERLAY: WebcamOverlaySettings = {

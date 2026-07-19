@@ -76,7 +76,7 @@ describe("normalizeProjectEditor", () => {
 			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
 			opacity: 1,
 			feather: 0,
-			background: "blur",
+			background: "transparent",
 		});
 
 		const invalid = normalizeProjectEditor({
@@ -94,7 +94,7 @@ describe("normalizeProjectEditor", () => {
 		expect(invalid.webcam.effect).toEqual(DEFAULT_WEBCAM_EFFECT_SETTINGS);
 	});
 
-	it("round-trips webcam effects and migrates legacy silhouette colors to pure black", () => {
+	it("round-trips webcam effects and freezes legacy appearance fields", () => {
 		const effect = {
 			type: "silhouette" as const,
 			silhouetteColor: "#050505",
@@ -110,6 +110,8 @@ describe("normalizeProjectEditor", () => {
 		expect(normalizeProjectEditor(parsed.editor).webcam.effect).toEqual({
 			...effect,
 			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+			opacity: 1,
+			background: "transparent",
 		});
 	});
 });

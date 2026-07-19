@@ -88,14 +88,14 @@ describe("composeSilhouettePixels", () => {
 		expect(Array.from(result)).toEqual([0, 0, 0, 255, 0, 0, 0, 0]);
 	});
 
-	it("keeps silhouette RGB stable while applying opacity to alpha", () => {
+	it("ignores legacy intensity and keeps mask alpha pure black", () => {
 		const result = composeSilhouettePixels(
 			new Uint8ClampedArray([255, 0, 0, 255]),
 			new Float32Array([0.5]),
 			{ ...settings, opacity: 0.5 },
 		);
 
-		expect(Array.from(result)).toEqual([0, 0, 0, 64]);
+		expect(Array.from(result)).toEqual([0, 0, 0, 128]);
 	});
 
 	it("renders an empty person mask fully transparent without source-pixel leakage", () => {
@@ -108,14 +108,14 @@ describe("composeSilhouettePixels", () => {
 		expect(Array.from(result)).toEqual([0, 0, 0, 0]);
 	});
 
-	it("overlays the silhouette on an original background when requested", () => {
+	it("ignores legacy background settings without leaking source pixels", () => {
 		const result = composeSilhouettePixels(
-			new Uint8ClampedArray([205, 105, 55, 255]),
-			new Float32Array([1]),
+			new Uint8ClampedArray([205, 105, 55, 255, 30, 60, 90, 255]),
+			new Float32Array([1, 0]),
 			{ ...settings, opacity: 0.5, background: "original" },
 		);
 
-		expect(Array.from(result)).toEqual([103, 53, 28, 255]);
+		expect(Array.from(result)).toEqual([0, 0, 0, 255, 0, 0, 0, 0]);
 	});
 
 	it("rejects mismatched source and mask data", () => {
@@ -126,6 +126,35 @@ describe("composeSilhouettePixels", () => {
 });
 
 describe("SilhouetteCompositor cartoon face loss", () => {
+	it("never draws source camera pixels for legacy background or intensity settings", () => {
+		const contexts = Array.from({ length: 4 }, createFakeContext);
+		let canvasIndex = 0;
+		const compositor = new SilhouetteCompositor({
+			createCanvas: () => {
+				const context = contexts[canvasIndex++];
+				return {
+					width: 1,
+					height: 1,
+					getContext: () => context,
+				} as unknown as HTMLCanvasElement;
+			},
+		});
+		const source = { width: 640, height: 360 } as unknown as CanvasImageSource;
+
+		compositor.compose(
+			source,
+			{ width: 1, height: 1, data: new Float32Array([1]), timestampMs: 0 },
+			{ ...settings, opacity: 0, background: "blur" },
+		);
+
+		for (const context of contexts) {
+			expect(
+				context.drawImage.mock.calls.some(([drawnSource]) => drawnSource === source),
+			).toBe(false);
+		}
+		expect(contexts[2]?.globalAlpha).toBe(1);
+	});
+
 	it("clips a detected face to the person but lets deterministic artwork finish its fade", () => {
 		const contexts = Array.from({ length: 4 }, createFakeContext);
 		let canvasIndex = 0;
@@ -159,10 +188,10 @@ describe("SilhouetteCompositor cartoon face loss", () => {
 			makeFace(true),
 		);
 		expect(faceContext.drawImage).toHaveBeenCalledTimes(1);
-		expect(faceContext.globalAlpha).toBeCloseTo(0.2);
+		expect(faceContext.globalAlpha).toBeCloseTo(0.5);
 	});
 
-	it("hides the cartoon face when the silhouette strength is zero", () => {
+	it("ignores legacy zero intensity and keeps the cartoon face in silhouette mode", () => {
 		const contexts = Array.from({ length: 4 }, createFakeContext);
 		let canvasIndex = 0;
 		const compositor = new SilhouetteCompositor({
@@ -184,7 +213,7 @@ describe("SilhouetteCompositor cartoon face loss", () => {
 			makeFace(false),
 		);
 
-		expect(faceContext.ellipse).not.toHaveBeenCalled();
-		expect(faceContext.fill).not.toHaveBeenCalled();
+		expect(faceContext.ellipse).toHaveBeenCalled();
+		expect(faceContext.fill).toHaveBeenCalled();
 	});
 });
