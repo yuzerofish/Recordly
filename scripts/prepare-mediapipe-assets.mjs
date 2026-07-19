@@ -8,6 +8,7 @@ const packageRoot = path.join(root, "node_modules", "@mediapipe", "tasks-vision"
 const publicRoot = path.join(root, "public", "mediapipe");
 const wasmTarget = path.join(publicRoot, "vision", "wasm");
 const modelPath = path.join(publicRoot, "models", "selfie_segmenter-float16-v1.tflite");
+const faceLandmarkerModelPath = path.join(publicRoot, "models", "face_landmarker-float16-v1.task");
 
 const expected = new Map([
 	["vision_wasm_internal.js", "e7fd9858e8e8f221d9b96eddc11f8e077f263e0b7bbd79d3cbe882b134274f8c"],
@@ -33,6 +34,9 @@ const expected = new Map([
 	],
 ]);
 const expectedModelHash = "191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b";
+const expectedFaceLandmarkerModelHash =
+	"64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff";
+const expectedFaceLandmarkerModelBytes = 3_758_596;
 
 function sha256(data) {
 	return createHash("sha256").update(data).digest("hex");
@@ -59,6 +63,17 @@ if (modelHash !== expectedModelHash) {
 	throw new Error(`Unexpected checksum for Selfie Segmenter model: ${modelHash}`);
 }
 
+const faceLandmarkerModel = await readFile(faceLandmarkerModelPath);
+const faceLandmarkerModelHash = sha256(faceLandmarkerModel);
+if (
+	faceLandmarkerModel.length !== expectedFaceLandmarkerModelBytes ||
+	faceLandmarkerModelHash !== expectedFaceLandmarkerModelHash
+) {
+	throw new Error(
+		`Unexpected Face Landmarker model: ${faceLandmarkerModel.length} bytes, SHA-256 ${faceLandmarkerModelHash}`,
+	);
+}
+
 console.log(
-	`[mediapipe] Verified ${expected.size} WASM assets and local Selfie Segmenter model (${model.length} bytes).`,
+	`[mediapipe] Verified ${expected.size} WASM assets, Selfie Segmenter (${model.length} bytes), and Face Landmarker (${faceLandmarkerModel.length} bytes).`,
 );

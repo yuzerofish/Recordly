@@ -2069,51 +2069,55 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			[syncWebcamMedia],
 		);
 
-		const renderWebcamEffectFrame = useCallback(async (discontinuity = false) => {
-			const video = webcamVideoRef.current;
-			const canvas = webcamEffectCanvasRef.current;
-			const settings = webcamEffectSettingsRef.current;
-			if (
-				!video ||
-				!canvas ||
-				settings?.type !== "silhouette" ||
-				video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
-				video.videoWidth <= 0 ||
-				video.videoHeight <= 0
-			) {
-				setWebcamEffectRendered(false);
-				setWebcamEffectStatus("idle");
-				return;
-			}
+		const renderWebcamEffectFrame = useCallback(
+			async (discontinuity = false, presentedTimestampMs?: number, realtime = false) => {
+				const video = webcamVideoRef.current;
+				const canvas = webcamEffectCanvasRef.current;
+				const settings = webcamEffectSettingsRef.current;
+				if (
+					!video ||
+					!canvas ||
+					settings?.type !== "silhouette" ||
+					video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+					video.videoWidth <= 0 ||
+					video.videoHeight <= 0
+				) {
+					setWebcamEffectRendered(false);
+					setWebcamEffectStatus("idle");
+					return;
+				}
 
-			if (!webcamEffectPipelineRef.current) {
-				webcamEffectPipelineRef.current = new WebcamEffectPipeline();
-				setWebcamEffectStatus("loading");
-			}
-			const result = await webcamEffectPipelineRef.current.processFrame({
-				source: video,
-				timestampMs: Math.max(0, video.currentTime * 1000),
-				settings,
-				mode: "preview",
-				discontinuity,
-			});
-			setWebcamEffectStatus(result.status);
-			if (!result.processed) {
-				setWebcamEffectRendered(false);
-				return;
-			}
+				if (!webcamEffectPipelineRef.current) {
+					webcamEffectPipelineRef.current = new WebcamEffectPipeline();
+					setWebcamEffectStatus("loading");
+				}
+				const result = await webcamEffectPipelineRef.current.processFrame({
+					source: video,
+					timestampMs: Math.max(0, presentedTimestampMs ?? video.currentTime * 1000),
+					settings,
+					mode: "preview",
+					discontinuity,
+					realtime,
+				});
+				setWebcamEffectStatus(result.status);
+				if (!result.processed) {
+					if (result.status !== "loading") setWebcamEffectRendered(false);
+					return;
+				}
 
-			if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-			if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-			const context = canvas.getContext("2d", { alpha: true });
-			if (!context) {
-				setWebcamEffectRendered(false);
-				return;
-			}
-			context.clearRect(0, 0, canvas.width, canvas.height);
-			context.drawImage(result.source, 0, 0, canvas.width, canvas.height);
-			setWebcamEffectRendered(true);
-		}, []);
+				if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+				if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+				const context = canvas.getContext("2d", { alpha: true });
+				if (!context) {
+					setWebcamEffectRendered(false);
+					return;
+				}
+				context.clearRect(0, 0, canvas.width, canvas.height);
+				context.drawImage(result.source, 0, 0, canvas.width, canvas.height);
+				setWebcamEffectRendered(true);
+			},
+			[],
+		);
 
 		const handleWebcamEffectSeeked = useCallback(() => {
 			void renderWebcamEffectFrame(true);
@@ -2137,14 +2141,16 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				if (cancelled || !isPlayingRef.current) return;
 				const video = webcamVideoRef.current as
 					| (HTMLVideoElement & {
-							requestVideoFrameCallback?: (callback: () => void) => number;
+							requestVideoFrameCallback?: (
+								callback: (_now: number, metadata: { mediaTime: number }) => void,
+							) => number;
 							cancelVideoFrameCallback?: (handle: number) => void;
 					  })
 					| null;
 				if (video?.requestVideoFrameCallback) {
-					videoFrameRequestId = video.requestVideoFrameCallback(() => {
+					videoFrameRequestId = video.requestVideoFrameCallback((_now, metadata) => {
 						videoFrameRequestId = null;
-						void tick();
+						void tick(Math.max(0, metadata.mediaTime * 1000));
 					});
 					return;
 				}
@@ -2153,11 +2159,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					void tick();
 				});
 			};
-			const tick = async () => {
+			const tick = async (presentedTimestampMs?: number) => {
 				if (cancelled) return;
 				if (!rendering) {
 					rendering = true;
-					await renderWebcamEffectFrame();
+					await renderWebcamEffectFrame(false, presentedTimestampMs, true);
 					rendering = false;
 				}
 				schedule();
@@ -2187,7 +2193,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		}, [syncWebcamMedia]);
 
 		useEffect(() => {
-			if (webcam?.effect?.type === "silhouette" && !webcamVideoRef.current?.seeking) {
+			if (
+				webcam?.effect?.type === "silhouette" &&
+				!webcamVideoRef.current?.seeking &&
+				!isPlayingRef.current
+			) {
 				void renderWebcamEffectFrame();
 			}
 		}, [

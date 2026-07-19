@@ -14,6 +14,7 @@ let segmenter: ImageSegmenter | null = null;
 let assetBaseUrl = "";
 let activeDelegate: SegmentationDelegate = "CPU";
 let lastTimestampMs = -1;
+let operationTail: Promise<void> = Promise.resolve();
 
 function post(message: SegmentationWorkerResponse, transfer?: Transferable[]): void {
 	scope.postMessage(message, transfer);
@@ -53,8 +54,13 @@ async function initialize(preferredDelegate: SegmentationDelegate): Promise<void
 
 async function resetSegmenter(): Promise<void> {
 	if (!assetBaseUrl) return;
-	await closeSegmenter();
-	segmenter = await createSegmenter(activeDelegate);
+	if (!segmenter) {
+		segmenter = await createSegmenter(activeDelegate);
+	} else {
+		await segmenter.setOptions({ runningMode: "IMAGE" });
+		await segmenter.setOptions({ runningMode: "VIDEO" });
+	}
+	lastTimestampMs = -1;
 }
 
 async function segmentFrame(
@@ -111,35 +117,49 @@ async function segmentFrame(
 	}
 }
 
+function enqueue(operation: () => Promise<void>): void {
+	operationTail = operationTail.then(operation, operation);
+}
+
 scope.onmessage = (event) => {
 	const message = event.data;
 	if (message.type === "initialize") {
 		assetBaseUrl = message.assetBaseUrl;
-		void initialize(message.preferredDelegate).catch((error) => {
-			post({
-				type: "error",
-				message: error instanceof Error ? error.message : String(error),
-			});
+		enqueue(async () => {
+			try {
+				await initialize(message.preferredDelegate);
+			} catch (error) {
+				post({
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
 		});
 		return;
 	}
 	if (message.type === "segment") {
-		void segmentFrame(
-			message.requestId,
-			message.frame,
-			message.timestampMs,
-			message.discontinuity,
+		enqueue(() =>
+			segmentFrame(
+				message.requestId,
+				message.frame,
+				message.timestampMs,
+				message.discontinuity,
+			),
 		);
 		return;
 	}
 	if (message.type === "reset") {
-		void resetSegmenter().catch((error) => {
-			post({
-				type: "error",
-				message: error instanceof Error ? error.message : String(error),
-			});
+		enqueue(async () => {
+			try {
+				await resetSegmenter();
+			} catch (error) {
+				post({
+					type: "error",
+					message: error instanceof Error ? error.message : String(error),
+				});
+			}
 		});
 		return;
 	}
-	void closeSegmenter();
+	enqueue(closeSegmenter);
 };

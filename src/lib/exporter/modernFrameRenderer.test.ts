@@ -218,7 +218,9 @@ describe("ModernFrameRenderer Pixi lifecycle", () => {
 			};
 			renderer.config.preferredRenderBackend = "webgpu";
 
-			await expect(renderer.createPixiApplication({} as HTMLCanvasElement)).resolves.toMatchObject({
+			await expect(
+				renderer.createPixiApplication({} as HTMLCanvasElement),
+			).resolves.toMatchObject({
 				backend: "webgl",
 			});
 
@@ -511,6 +513,109 @@ describe("ModernFrameRenderer webcam frame cache", () => {
 			720,
 		);
 	});
+
+	it("crops and mirrors the processed effect source through the shared export layout", async () => {
+		vi.stubGlobal("HTMLMediaElement", { HAVE_CURRENT_DATA: 2 });
+		vi.stubGlobal("document", {
+			createElement: vi.fn((tag: string) => {
+				if (tag !== "canvas") {
+					throw new Error(`Unexpected element requested in test: ${tag}`);
+				}
+				return createMockCanvas();
+			}),
+		});
+
+		try {
+			const renderer = createRenderer() as any;
+			const webcamVideo = {
+				currentTime: 3.25,
+				duration: Number.NaN,
+				readyState: 2,
+				seeking: false,
+				videoWidth: 1000,
+				videoHeight: 500,
+			};
+			const asymmetricEffectSource = createMockCanvas();
+			asymmetricEffectSource.width = 1000;
+			asymmetricEffectSource.height = 500;
+			asymmetricEffectSource.context.fillRect(0, 0, 125, 500);
+			const processFrame = vi.fn(async () => ({
+				processed: true,
+				source: asymmetricEffectSource,
+				status: "ready",
+			}));
+
+			renderer.config.webcam = {
+				...DEFAULT_WEBCAM_OVERLAY,
+				enabled: true,
+				mirror: true,
+				cropRegion: { x: 0.1, y: 0.2, width: 0.6, height: 0.5 },
+				width: 50,
+				height: 30,
+				margin: 20,
+				reactToZoom: false,
+				positionPreset: "bottom-right",
+				cornerRadius: 0,
+				shadow: 0,
+				effect: {
+					...DEFAULT_WEBCAM_OVERLAY.effect,
+					type: "silhouette",
+					background: "transparent",
+				},
+			};
+			renderer.webcamVideoElement = webcamVideo;
+			renderer.lastSyncedWebcamTime = 3.25;
+			renderer.currentVideoTime = 3.25;
+			renderer.animationState = { appliedScale: 1 };
+			renderer.webcamEffectPipeline = {
+				dispose: vi.fn(),
+				processFrame,
+			};
+			renderer.webcamRootContainer = {
+				visible: false,
+				position: { set: vi.fn() },
+			};
+			renderer.webcamContainer = { addChildAt: vi.fn() };
+			renderer.webcamMaskGraphics = {
+				clear: vi.fn(),
+				moveTo: vi.fn(),
+				lineTo: vi.fn(),
+				closePath: vi.fn(),
+				fill: vi.fn(),
+			};
+			renderer.webcamShadowLayers = [];
+
+			await renderer.prepareWebcamEffectFrame(9);
+
+			expect(processFrame).toHaveBeenCalledWith({
+				source: webcamVideo,
+				timestampMs: 3250,
+				settings: renderer.config.webcam.effect,
+				mode: "export",
+			});
+			expect(renderer.webcamEffectFrameSource).toBe(asymmetricEffectSource);
+
+			renderer.updateWebcamOverlay();
+
+			expect(renderer.webcamFrameCacheCtx.drawImage).toHaveBeenCalledWith(
+				asymmetricEffectSource,
+				100,
+				100,
+				600,
+				250,
+				0,
+				0,
+				600,
+				250,
+			);
+			expect(renderer.webcamRootContainer.position.set).toHaveBeenCalledWith(1360, 736);
+			expect(renderer.webcamSprite.anchor.set).toHaveBeenCalledWith(0.5);
+			expect(renderer.webcamSprite.position.set).toHaveBeenCalledWith(270, 162);
+			expect(renderer.webcamSprite.scale.set).toHaveBeenCalledWith(-1.296, 1.296);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });
 
 describe("ModernFrameRenderer webcam export fallback", () => {
@@ -639,14 +744,14 @@ describe("ModernFrameRenderer webcam export fallback", () => {
 			};
 			renderer.config.webcamUrl = "file:///tmp/webcam.webm";
 
-				await renderer.setupWebcamSource();
-				const syncPromise = renderer.syncWebcamFrame(1);
+			await renderer.setupWebcamSource();
+			const syncPromise = renderer.syncWebcamFrame(1);
 
 			await vi.advanceTimersByTimeAsync(5_001);
-				await expect(syncPromise).resolves.toBeUndefined();
+			await expect(syncPromise).resolves.toBeUndefined();
 
-				expect(cancelForwardFrameSourceMock).toHaveBeenCalled();
-				expect(destroyForwardFrameSourceMock).toHaveBeenCalled();
+			expect(cancelForwardFrameSourceMock).toHaveBeenCalled();
+			expect(destroyForwardFrameSourceMock).toHaveBeenCalled();
 			expect(revoke).toHaveBeenCalled();
 			expect(renderer.webcamForwardFrameSource).toBeNull();
 			expect(renderer.webcamVideoElement).toBeNull();

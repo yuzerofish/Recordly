@@ -14,6 +14,7 @@ const MIME_TYPES: Record<string, string> = {
 	".mjs": "text/javascript; charset=utf-8",
 	".png": "image/png",
 	".svg": "image/svg+xml",
+	".task": "application/octet-stream",
 	".tflite": "application/octet-stream",
 	".txt": "text/plain; charset=utf-8",
 	".wasm": "application/wasm",

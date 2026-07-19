@@ -347,16 +347,18 @@ export function useWebcamPreviewOverlay({
 			if (cancelled) return;
 			const video = getActiveVideo() as
 				| (HTMLVideoElement & {
-						requestVideoFrameCallback?: (callback: () => void) => number;
+						requestVideoFrameCallback?: (
+							callback: (_now: number, metadata: { mediaTime: number }) => void,
+						) => number;
 						cancelVideoFrameCallback?: (handle: number) => void;
 				  })
 				| null;
 			if (video?.requestVideoFrameCallback) {
 				scheduledVideo = video;
-				videoFrameRequestId = video.requestVideoFrameCallback(() => {
+				videoFrameRequestId = video.requestVideoFrameCallback((_now, metadata) => {
 					videoFrameRequestId = null;
 					scheduledVideo = null;
-					void tick();
+					void tick(Math.max(0, metadata.mediaTime * 1000));
 				});
 				return;
 			}
@@ -365,7 +367,7 @@ export function useWebcamPreviewOverlay({
 				void tick();
 			});
 		};
-		const tick = async () => {
+		const tick = async (presentedTimestampMs?: number) => {
 			if (cancelled) return;
 			const video = getActiveVideo();
 			if (
@@ -383,9 +385,10 @@ export function useWebcamPreviewOverlay({
 					}
 					const result = await webcamEffectPipelineRef.current.processFrame({
 						source: video,
-						timestampMs: Math.max(0, video.currentTime * 1000),
+						timestampMs: Math.max(0, presentedTimestampMs ?? video.currentTime * 1000),
 						settings: effectSettings,
 						mode: "preview",
+						realtime: true,
 					});
 					if (cancelled) return;
 					setWebcamEffectStatus(result.status);
@@ -393,7 +396,7 @@ export function useWebcamPreviewOverlay({
 						drawToCanvas(webcamPreviewCanvasRef.current, result.source);
 						drawToCanvas(recordingWebcamPreviewCanvasRef.current, result.source);
 						setWebcamEffectRendered(true);
-					} else {
+					} else if (result.status !== "loading") {
 						setWebcamEffectRendered(false);
 					}
 				} finally {

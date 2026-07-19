@@ -5,6 +5,42 @@ export interface PersonMask {
 	timestampMs: number;
 }
 
+export interface NormalizedFacePoint {
+	x: number;
+	y: number;
+}
+
+export interface CartoonFaceEyeGeometry {
+	outer: NormalizedFacePoint;
+	inner: NormalizedFacePoint;
+	upper: NormalizedFacePoint;
+	lower: NormalizedFacePoint;
+	iris?: NormalizedFacePoint;
+}
+
+export interface CartoonFaceGeometry {
+	timestampMs: number;
+	imageLeftEye: CartoonFaceEyeGeometry;
+	imageRightEye: CartoonFaceEyeGeometry;
+	mouth: {
+		left: NormalizedFacePoint;
+		right: NormalizedFacePoint;
+		upper: NormalizedFacePoint;
+		lower: NormalizedFacePoint;
+	};
+	face: {
+		left: NormalizedFacePoint;
+		right: NormalizedFacePoint;
+		top: NormalizedFacePoint;
+		bottom: NormalizedFacePoint;
+	};
+}
+
+export interface WebcamEffectInference {
+	mask: PersonMask;
+	face: CartoonFaceGeometry | null;
+}
+
 export type SegmentationDelegate = "GPU" | "CPU";
 
 export type SegmentationWorkerRequest =
@@ -29,5 +65,30 @@ export type SegmentationWorkerResponse =
 			type: "result";
 			requestId: number;
 			mask: PersonMask;
+	  }
+	| { type: "error"; requestId?: number; message: string };
+
+export type FaceLandmarkerWorkerRequest =
+	| {
+			type: "initialize";
+			assetBaseUrl: string;
+			preferredDelegate: SegmentationDelegate;
+	  }
+	| {
+			type: "track";
+			requestId: number;
+			frame: ImageBitmap;
+			timestampMs: number;
+			discontinuity: boolean;
+	  }
+	| { type: "reset" }
+	| { type: "dispose" };
+
+export type FaceLandmarkerWorkerResponse =
+	| { type: "ready"; delegate: SegmentationDelegate }
+	| {
+			type: "result";
+			requestId: number;
+			face: CartoonFaceGeometry | null;
 	  }
 	| { type: "error"; requestId?: number; message: string };

@@ -26,5 +26,22 @@ Model card:
 https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Selfie%20Segmentation.pdf
 SHA-256: 191ac9529ae506ee0beefa6b2c945a172dab9d07d1e802a290a4e4038226658b
 
-The person segmentation model runs locally. Recordly does not upload webcam
-frames or segmentation masks for this effect.
+MediaPipe Face Landmarker (float16 bundle, version 1)
+-----------------------------------------------------
+Includes BlazeFace, FaceMesh V2, and Blendshape models from Google MediaPipe.
+Licensed under the Apache License, Version 2.0.
+Model source:
+https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+SHA-256: 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+Size: 3,758,596 bytes
+
+Recordly Cartoon Face Layer
+---------------------------
+The white eyes, black pupils, and toothy smile are original deterministic
+Canvas drawings implemented in src/lib/webcamEffects/cartoonFace.ts. Their
+visual direction was informed by a user-provided reference image. No pixels,
+photographic subject, or background from that reference are included.
+
+The person segmentation and face landmark models run locally. Recordly does
+not upload webcam frames, segmentation masks, or facial landmarks for this
+effect.
