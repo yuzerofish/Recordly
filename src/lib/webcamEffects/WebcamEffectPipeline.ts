@@ -10,6 +10,7 @@ import type {
 	SegmentationWorkerResponse,
 	WebcamEffectInference,
 } from "./messages";
+import { PersonMaskTracker } from "./personMask";
 import { SilhouetteCompositor } from "./silhouetteCompositor";
 
 type RenderCanvas = HTMLCanvasElement | OffscreenCanvas;
@@ -134,12 +135,14 @@ export class WebcamEffectPipeline {
 	private previewDiscontinuityPending = 0;
 	private nextPreviewDiscontinuitySequence = 1;
 	private latestPreviewDiscontinuitySequence = 0;
+	private previewInferenceEpoch = 0;
 	private previewDiscontinuityCaptures = new Set<number>();
 	private previewDiscontinuityIdleWaiters = new Set<() => void>();
 	private normalPreviewGeneration = 0;
 	private lastInference: WebcamEffectInference | null = null;
 	private lastFacePresentation: CartoonFacePresentation | null = null;
 	private readonly faceTracker = new CartoonFaceTracker();
+	private readonly maskTracker = new PersonMaskTracker();
 	private lastTimestampMs: number | null = null;
 	private disposed = false;
 	private status: WebcamEffectPipelineStatus = "idle";
@@ -342,17 +345,26 @@ export class WebcamEffectPipeline {
 		this.lastInference = null;
 		this.lastFacePresentation = null;
 		this.faceTracker.reset();
+		this.maskTracker.reset();
 		this.lastTimestampMs = null;
 	}
 
-	private acceptInference(inference: WebcamEffectInference, discontinuity = false): void {
-		this.lastInference = inference;
-		this.lastTimestampMs = inference.mask.timestampMs;
+	private acceptInference(
+		inference: WebcamEffectInference,
+		discontinuity = false,
+	): WebcamEffectInference {
+		const acceptedInference = {
+			...inference,
+			mask: this.maskTracker.update(inference.mask, discontinuity),
+		};
+		this.lastInference = acceptedInference;
+		this.lastTimestampMs = acceptedInference.mask.timestampMs;
 		this.lastFacePresentation = this.faceTracker.update(
 			inference.face,
-			inference.mask.timestampMs,
+			acceptedInference.mask.timestampMs,
 			discontinuity,
 		);
+		return acceptedInference;
 	}
 
 	private startPreviewInference(
@@ -472,8 +484,8 @@ export class WebcamEffectPipeline {
 			if (Math.abs(inference.mask.timestampMs - request.timestampMs) >= 0.001) {
 				throw new Error("Person segmentation returned a mask for the wrong timestamp");
 			}
-			this.acceptInference(inference, true);
-			request.resolve({ inference, face: this.lastFacePresentation });
+			const acceptedInference = this.acceptInference(inference, true);
+			request.resolve({ inference: acceptedInference, face: this.lastFacePresentation });
 		} catch (error) {
 			if (
 				request.superseded ||
@@ -602,6 +614,7 @@ export class WebcamEffectPipeline {
 		const initialMovedBackward =
 			this.lastTimestampMs !== null && request.timestampMs < this.lastTimestampMs - 0.001;
 		let discontinuity = Boolean(request.discontinuity || initialMovedBackward);
+		const previewInferenceEpoch = this.previewInferenceEpoch;
 		let normalPreviewGeneration: number | null = null;
 		if (request.mode === "preview" && !discontinuity) {
 			normalPreviewGeneration = await this.acquireNormalPreviewTurn(
@@ -628,6 +641,8 @@ export class WebcamEffectPipeline {
 			// A seek supersedes every normal paused render that entered before it,
 			// including one still waiting for the previous frame to finish.
 			this.normalPreviewGeneration += 1;
+			this.previewInferenceEpoch += 1;
+			this.clearCachedInference();
 			normalPreviewGeneration = null;
 			discontinuitySequence = this.nextPreviewDiscontinuitySequence++;
 			this.latestPreviewDiscontinuitySequence = discontinuitySequence;
@@ -685,13 +700,15 @@ export class WebcamEffectPipeline {
 						renderInference = prepared.inference;
 						renderFace = prepared.face;
 					} else {
-						this.acceptInference(
-							await this.startPreviewInference(
-								renderSource,
-								request.timestampMs,
-								false,
-							),
+						const freshInference = await this.startPreviewInference(
+							renderSource,
+							request.timestampMs,
+							false,
 						);
+						if (previewInferenceEpoch !== this.previewInferenceEpoch) {
+							return { source: request.source, processed: false, status: "loading" };
+						}
+						this.acceptInference(freshInference);
 					}
 				} else {
 					this.acceptInference(

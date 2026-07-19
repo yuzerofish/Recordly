@@ -17,6 +17,9 @@ class FakeWorker {
 	autoInitialize = true;
 	autoSegment = true;
 	failSegments = false;
+	maskData = new Float32Array([1]);
+	maskWidth = 1;
+	maskHeight = 1;
 
 	postMessage(message: SegmentationWorkerRequest) {
 		this.messages.push(message);
@@ -45,15 +48,21 @@ class FakeWorker {
 		}
 	}
 
-	resolveSegment(requestId: number, timestampMs: number) {
+	resolveSegment(
+		requestId: number,
+		timestampMs: number,
+		data = this.maskData,
+		width = this.maskWidth,
+		height = this.maskHeight,
+	) {
 		this.onmessage?.({
 			data: {
 				type: "result",
 				requestId,
 				mask: {
-					data: new Float32Array([1]),
-					width: 1,
-					height: 1,
+					data: new Float32Array(data),
+					width,
+					height,
 					timestampMs,
 				},
 			},
@@ -277,6 +286,67 @@ describe("WebcamEffectPipeline", () => {
 		expect(segments).toHaveLength(1);
 		expect(segments[0]).toMatchObject({ timestampMs: 1250, discontinuity: false });
 		expect(harness.compositor.compose).toHaveBeenCalledTimes(2);
+	});
+
+	it("uses identical person-loss hold and fade frames in preview and export", async () => {
+		const preview = createHarness();
+		const exporter = createHarness();
+		const timestamps = [0, 100, 225, 301];
+
+		for (const timestampMs of timestamps) {
+			const hasPerson = timestampMs === 0;
+			preview.worker.maskData = new Float32Array([hasPerson ? 1 : 0]);
+			exporter.worker.maskData = new Float32Array([hasPerson ? 1 : 0]);
+			preview.faceWorker.face = hasPerson ? faceGeometry : null;
+			exporter.faceWorker.face = hasPerson ? faceGeometry : null;
+			await preview.pipeline.processFrame({
+				source,
+				timestampMs,
+				settings: silhouette,
+				mode: "preview",
+			});
+			await exporter.pipeline.processFrame({
+				source,
+				timestampMs,
+				settings: silhouette,
+				mode: "export",
+			});
+		}
+
+		const previewMasks = preview.compositor.compose.mock.calls.map((call) => call[1]);
+		const exportMasks = exporter.compositor.compose.mock.calls.map((call) => call[1]);
+		expect(previewMasks.map((mask) => Array.from(mask.data))).toEqual(
+			exportMasks.map((mask) => Array.from(mask.data)),
+		);
+		expect(previewMasks.map((mask) => mask.timestampMs)).toEqual(timestamps);
+		expect(previewMasks[1]?.data[0]).toBe(1);
+		expect(previewMasks[2]?.data[0]).toBeCloseTo(0.5, 6);
+		expect(previewMasks[3]?.data[0]).toBe(0);
+		expect(preview.compositor.compose.mock.calls.map((call) => call[3])).toEqual(
+			exporter.compositor.compose.mock.calls.map((call) => call[3]),
+		);
+		expect(preview.compositor.compose.mock.calls[3]?.[3]).toBeNull();
+	});
+
+	it("clears a held person immediately across an explicit discontinuity", async () => {
+		const harness = createHarness();
+		await harness.pipeline.processFrame({
+			source,
+			timestampMs: 0,
+			settings: silhouette,
+			mode: "export",
+		});
+		harness.worker.maskData = new Float32Array([0]);
+
+		await harness.pipeline.processFrame({
+			source,
+			timestampMs: 100,
+			settings: silhouette,
+			mode: "export",
+			discontinuity: true,
+		});
+
+		expect(harness.compositor.compose.mock.calls[1]?.[1].data[0]).toBe(0);
 	});
 
 	it("freezes one media frame before cloning it for both local inference workers", async () => {
@@ -856,6 +926,7 @@ describe("WebcamEffectPipeline", () => {
 	it("lets a seek supersede older normal previews that are active or waiting", async () => {
 		const harness = createHarness();
 		harness.worker.autoSegment = false;
+		harness.faceWorker.face = faceGeometry;
 
 		const active = harness.pipeline.processFrame({
 			source,
@@ -868,6 +939,7 @@ describe("WebcamEffectPipeline", () => {
 				harness.worker.messages.filter((message) => message.type === "segment"),
 			).toHaveLength(1);
 		});
+		harness.faceWorker.face = null;
 		const waiting = harness.pipeline.processFrame({
 			source,
 			timestampMs: 1500,
@@ -888,7 +960,7 @@ describe("WebcamEffectPipeline", () => {
 		if (!activeRequest || activeRequest.type !== "segment") {
 			throw new Error("Expected the active normal preview request");
 		}
-		harness.worker.resolveSegment(activeRequest.requestId, 1000);
+		harness.worker.resolveSegment(activeRequest.requestId, 1000, new Float32Array([1]));
 		await vi.waitFor(() => {
 			const segments = harness.worker.messages.filter(
 				(message) => message.type === "segment",
@@ -902,7 +974,7 @@ describe("WebcamEffectPipeline", () => {
 		if (!seekRequest || seekRequest.type !== "segment") {
 			throw new Error("Expected the latest seek request");
 		}
-		harness.worker.resolveSegment(seekRequest.requestId, 5000);
+		harness.worker.resolveSegment(seekRequest.requestId, 5000, new Float32Array([0]));
 
 		await expect(active).resolves.toMatchObject({ processed: false, status: "loading" });
 		await expect(waiting).resolves.toMatchObject({ processed: false, status: "loading" });
@@ -914,6 +986,8 @@ describe("WebcamEffectPipeline", () => {
 		).toHaveLength(0);
 		expect(harness.compositor.compose).toHaveBeenCalledTimes(1);
 		expect(harness.compositor.compose.mock.calls[0]?.[1]).toMatchObject({ timestampMs: 5000 });
+		expect(harness.compositor.compose.mock.calls[0]?.[1].data[0]).toBe(0);
+		expect(harness.compositor.compose.mock.calls[0]?.[3]).toBeNull();
 		expect(harness.compositor.compose.mock.calls[0]?.[2]).toMatchObject({ opacity: 0.9 });
 	});
 

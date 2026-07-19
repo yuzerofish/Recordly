@@ -2091,6 +2091,15 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					webcamEffectPipelineRef.current = new WebcamEffectPipeline();
 					setWebcamEffectStatus("loading");
 				}
+				if (discontinuity) {
+					if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+					if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+					canvas
+						.getContext("2d", { alpha: true })
+						?.clearRect(0, 0, canvas.width, canvas.height);
+					setWebcamEffectRendered(true);
+					setWebcamEffectStatus("loading");
+				}
 				const result = await webcamEffectPipelineRef.current.processFrame({
 					source: video,
 					timestampMs: Math.max(0, presentedTimestampMs ?? video.currentTime * 1000),

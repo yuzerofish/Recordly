@@ -98,6 +98,16 @@ describe("composeSilhouettePixels", () => {
 		expect(Array.from(result)).toEqual([5, 5, 5, 64]);
 	});
 
+	it("renders an empty person mask fully transparent without source-pixel leakage", () => {
+		const result = composeSilhouettePixels(
+			new Uint8ClampedArray([220, 140, 80, 255]),
+			new Float32Array([0]),
+			settings,
+		);
+
+		expect(Array.from(result)).toEqual([5, 5, 5, 0]);
+	});
+
 	it("overlays the silhouette on an original background when requested", () => {
 		const result = composeSilhouettePixels(
 			new Uint8ClampedArray([205, 105, 55, 255]),
