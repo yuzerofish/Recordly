@@ -5,6 +5,7 @@ import {
 	createProcessedMicrophoneConstraints,
 	normalizeBrowserMicrophoneProfile,
 	resolveBrowserCaptureCursorPolicy,
+	resolveScreenRecordingPermissionPreflight,
 	shouldUseNativeWindowsCaptureForSource,
 } from "./useScreenRecorder";
 
@@ -170,6 +171,40 @@ describe("shouldUseNativeWindowsCaptureForSource", () => {
 
 	it("keeps browser capture for non-desktop sources", () => {
 		expect(shouldUseNativeWindowsCaptureForSource({ id: "browser-tab:abc" })).toBe(false);
+	});
+});
+
+describe("resolveScreenRecordingPermissionPreflight", () => {
+	it("accepts an explicit macOS grant without a capture probe", () => {
+		expect(
+			resolveScreenRecordingPermissionPreflight({
+				success: true,
+				status: "granted",
+			}),
+		).toBe("granted");
+	});
+
+	it.each([
+		"not-determined",
+		"denied",
+		"restricted",
+		"unknown",
+	])("defers a %s status to the real capture backend instead of blocking recording", (status) => {
+		expect(
+			resolveScreenRecordingPermissionPreflight({
+				success: true,
+				status,
+			}),
+		).toBe("verify-on-capture");
+	});
+
+	it("defers a failed read-only permission check to the real capture backend", () => {
+		expect(
+			resolveScreenRecordingPermissionPreflight({
+				success: false,
+				status: "unknown",
+			}),
+		).toBe("verify-on-capture");
 	});
 });
 

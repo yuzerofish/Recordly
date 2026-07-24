@@ -45,6 +45,7 @@ export type BrowserMicrophoneProfile =
 	| "no-echo"
 	| "no-noise-suppression"
 	| "raw";
+export type ScreenRecordingPermissionPreflight = "granted" | "verify-on-capture";
 type BrowserCaptureCursorMode = "always" | "never";
 export type BrowserCaptureCursorPolicy = {
 	streamCursor: BrowserCaptureCursorMode;
@@ -135,7 +136,7 @@ type UseScreenRecorderReturn = {
 	pauseRecording: () => void;
 	resumeRecording: () => void;
 	cancelRecording: () => void;
-	preparePermissions: (options?: { startup?: boolean }) => Promise<boolean>;
+	preparePermissions: () => Promise<boolean>;
 	isMacOS: boolean;
 	microphoneEnabled: boolean;
 	setMicrophoneEnabled: (enabled: boolean) => void;
@@ -188,6 +189,13 @@ export function normalizeBrowserMicrophoneProfile(value?: string | null): Browse
 		: DEFAULT_BROWSER_MICROPHONE_PROFILE;
 }
 
+export function resolveScreenRecordingPermissionPreflight(result: {
+	success: boolean;
+	status: string;
+}): ScreenRecordingPermissionPreflight {
+	return result.success && result.status === "granted" ? "granted" : "verify-on-capture";
+}
+
 export function resolveBrowserCaptureCursorPolicy({
 	nativeWindowsCaptureStartFailed = false,
 }: {
@@ -213,10 +221,7 @@ export function resolveBrowserCaptureCursorPolicy({
 export function shouldUseNativeWindowsCaptureForSource(
 	source: Pick<ProcessedDesktopSource, "id"> | null | undefined,
 ): boolean {
-	return (
-		source?.id?.startsWith("screen:") === true ||
-		source?.id?.startsWith("window:") === true
-	);
+	return source?.id?.startsWith("screen:") === true || source?.id?.startsWith("window:") === true;
 }
 
 export function createProcessedMicrophoneConstraints(
@@ -488,45 +493,32 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		micFallbackPauseIntervals.current = [];
 	}, []);
 
-	const preparePermissions = useCallback(async (options: { startup?: boolean } = {}) => {
+	const preparePermissions = useCallback(async () => {
 		const platform = await window.electronAPI.getPlatform();
 		if (platform !== "darwin") {
 			return true;
 		}
 
 		const screenPermission = await window.electronAPI.getScreenRecordingPermissionStatus();
-		if (!screenPermission.success || screenPermission.status !== "granted") {
-			await window.electronAPI.openScreenRecordingPreferences();
-			alert(
-				options.startup
-					? "Recordly needs Screen Recording permission before you start. System Settings has been opened. After enabling it, quit and reopen Recordly."
-					: "Screen Recording permission is still missing. System Settings has been opened again. Enable it, then quit and reopen Recordly before recording.",
+		if (resolveScreenRecordingPermissionPreflight(screenPermission) === "verify-on-capture") {
+			// Electron's read-only status can be stale for locally rebuilt, ad-hoc signed apps.
+			// Let the real capture attempt request/verify TCC; its native error path opens
+			// System Settings only when macOS actually rejects capture.
+			console.info(
+				"Screen Recording permission will be verified by the capture backend:",
+				screenPermission.status,
 			);
-			return false;
 		}
 
 		const accessibilityPermission = await window.electronAPI.getAccessibilityPermissionStatus();
-		if (!accessibilityPermission.success) {
-			return false;
+		if (!accessibilityPermission.success || !accessibilityPermission.trusted) {
+			// Cursor telemetry can degrade gracefully. It must not prevent the core
+			// ScreenCaptureKit recording path from requesting/verifying its own access.
+			console.info(
+				"Accessibility permission is unavailable; cursor tracking may be limited.",
+			);
 		}
-
-		if (accessibilityPermission.trusted) {
-			return true;
-		}
-
-		const requestedAccessibility = await window.electronAPI.requestAccessibilityPermission();
-		if (requestedAccessibility.success && requestedAccessibility.trusted) {
-			return true;
-		}
-
-		await window.electronAPI.openAccessibilityPreferences();
-		alert(
-			options.startup
-				? "Recordly also needs Accessibility permission for cursor tracking. System Settings has been opened. After enabling it, quit and reopen Recordly."
-				: "Accessibility permission is still missing. System Settings has been opened again. Enable it, then quit and reopen Recordly before recording.",
-		);
-
-		return false;
+		return true;
 	}, []);
 
 	const selectMimeType = useCallback(() => {

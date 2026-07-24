@@ -84,7 +84,6 @@ function LaunchWindowContent() {
 		setWebcamDeviceId,
 		countdownDelay,
 		setCountdownDelay,
-		preparePermissions,
 	} = useScreenRecorder();
 
 	const { elapsed, formatTime } = useRecordingTimer(recording, paused);
@@ -148,7 +147,7 @@ function LaunchWindowContent() {
 		hideHudFromCapture,
 		chooseRecordingsDirectory,
 		toggleHudCaptureProtection,
-	} = useLaunchWindowSystemState(preparePermissions);
+	} = useLaunchWindowSystemState();
 
 	const supportsHudCaptureProtection = platform !== "linux";
 
