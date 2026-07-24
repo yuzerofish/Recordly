@@ -7,6 +7,7 @@
 - 上游仓库：`webadderallorg/Recordly`
 - 固定上游基线：`360b1605009b1c9439629bfaf2033c59f94c611b`
 - 功能分支：`codex/recordly-silhouette`
+- GitHub 归档分支：<https://github.com/yuzerofish/Recordly/tree/codex/recordly-silhouette>
 - 目标平台：当前用户的 Apple Silicon macOS 个人环境
 - 源码许可：保留上游 AGPL-3.0、版权归属和第三方许可
 

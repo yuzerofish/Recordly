@@ -22,6 +22,15 @@ Language: EN | [简中](README.zh-CN.md)
 
 ---
 
+## Personal silhouette fork
+
+This branch is a personal Apple Silicon macOS derivative of upstream Recordly. It adds two webcam-person modes, **Original** and **Black silhouette**, backed by bundled local MediaPipe models. In silhouette mode, the person becomes pure black with a tracked cartoon face, while preview, project playback, MP4, and GIF rendering share the same effect settings and frame-time logic.
+
+- Development branch: `codex/recordly-silhouette`
+- Delivery scope and verification: [personal project archive](./docs/recordly-silhouette-personal-archive.md)
+- Distribution status: built and tested only on Apple Silicon macOS; not an official upstream binary or a notarized public release
+- Download note: the upstream release links later in this README do not contain the silhouette build
+
 ## What is Recordly?
 
 Recordly is a desktop app for recording and editing screen captures with motion-driven presentation tools built in. Instead of sending raw footage to a motion designer just to add zooms, cursor polish, or a styled background, Recordly handles that workflow in one place for free.
