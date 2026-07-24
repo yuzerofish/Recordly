@@ -1,11 +1,22 @@
 import { WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
-import type { CartoonFaceEyeGeometry, CartoonFaceGeometry, NormalizedFacePoint } from "./messages";
+import type {
+	CartoonFaceExpression,
+	CartoonFaceEyeGeometry,
+	CartoonFaceGeometry,
+	NormalizedFacePoint,
+} from "./messages";
 
 type DrawContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 interface LandmarkLike {
 	x?: number;
 	y?: number;
+}
+
+interface BlendshapeCategoryLike {
+	categoryName?: string;
+	displayName?: string;
+	score?: number;
 }
 
 interface PixelPoint {
@@ -36,6 +47,7 @@ export interface CartoonEyeLayout {
 	pupilX: number;
 	pupilY: number;
 	pupilRadius: number;
+	pupilOpacity: number;
 }
 
 export interface CartoonMouthLayout {
@@ -43,6 +55,8 @@ export interface CartoonMouthLayout {
 	y: number;
 	width: number;
 	height: number;
+	leftCornerLift: number;
+	rightCornerLift: number;
 }
 
 export interface CartoonFaceLayout {
@@ -56,9 +70,25 @@ export interface CartoonFaceLayout {
 }
 
 export const CARTOON_FACE_LOSS_FADE_MS = 150;
-export const CARTOON_FACE_LOSS_HOLD_MS = 150;
+export const CARTOON_FACE_LOSS_HOLD_MS = 650;
 const CARTOON_FACE_PREDICTION_HORIZON_MS = 120;
 const MAX_NORMALIZED_CENTER_SPEED_PER_MS = 0.001;
+const EXPRESSION_SMOOTHING_TIME_CONSTANT_MS = 55;
+const MAX_EXPRESSION_SMOOTHING_GAP_MS = 250;
+const EYE_RADIUS_X_TO_INTEROCULAR = 0.205;
+const EYE_RADIUS_Y_TO_INTEROCULAR = 0.305;
+const PUPIL_RADIUS_TO_INTEROCULAR = 0.068;
+const PUPIL_EDGE_INSET = 1.02;
+const NEUTRAL_MOUTH_WIDTH_TO_INTEROCULAR = 0.68;
+const NEUTRAL_MOUTH_HEIGHT_TO_WIDTH = 0.41;
+
+const NEUTRAL_EXPRESSION: CartoonFaceExpression = {
+	eyeBlinkLeft: 0,
+	eyeBlinkRight: 0,
+	mouthSmileLeft: 0,
+	mouthSmileRight: 0,
+	jawOpen: 0,
+};
 
 const LANDMARK_INDEX = {
 	imageLeftEye: { outer: 33, inner: 133, upper: 159, lower: 145, iris: 468 },
@@ -75,6 +105,25 @@ function point(landmarks: LandmarkLike[], index: number): NormalizedFacePoint | 
 	const landmark = landmarks[index];
 	if (!landmark || !Number.isFinite(landmark.x) || !Number.isFinite(landmark.y)) return null;
 	return { x: landmark.x as number, y: landmark.y as number };
+}
+
+function extractExpression(
+	categories: BlendshapeCategoryLike[] | undefined,
+): CartoonFaceExpression {
+	const scores = new Map<string, number>();
+	for (const category of categories ?? []) {
+		const name = category.categoryName ?? category.displayName;
+		if (!name || !Number.isFinite(category.score)) continue;
+		scores.set(name, clamp(category.score as number, 0, 1));
+	}
+	const score = (name: keyof CartoonFaceExpression) => scores.get(name) ?? 0;
+	return {
+		eyeBlinkLeft: score("eyeBlinkLeft"),
+		eyeBlinkRight: score("eyeBlinkRight"),
+		mouthSmileLeft: score("mouthSmileLeft"),
+		mouthSmileRight: score("mouthSmileRight"),
+		jawOpen: score("jawOpen"),
+	};
 }
 
 function eyeGeometry(
@@ -98,6 +147,7 @@ function eyeGeometry(
 export function extractCartoonFaceGeometry(
 	landmarks: LandmarkLike[] | undefined,
 	timestampMs: number,
+	blendshapes?: BlendshapeCategoryLike[],
 ): CartoonFaceGeometry | null {
 	if (!landmarks) return null;
 	const imageLeftEye = eyeGeometry(landmarks, LANDMARK_INDEX.imageLeftEye);
@@ -126,10 +176,43 @@ export function extractCartoonFaceGeometry(
 	}
 	return {
 		timestampMs,
+		expression: extractExpression(blendshapes),
 		imageLeftEye,
 		imageRightEye,
 		mouth: { left: mouthLeft, right: mouthRight, upper: mouthUpper, lower: mouthLower },
 		face: { left: faceLeft, right: faceRight, top: faceTop, bottom: faceBottom },
+	};
+}
+
+function normalizeExpression(expression: CartoonFaceExpression | undefined): CartoonFaceExpression {
+	return {
+		eyeBlinkLeft: clamp(expression?.eyeBlinkLeft ?? 0, 0, 1),
+		eyeBlinkRight: clamp(expression?.eyeBlinkRight ?? 0, 0, 1),
+		mouthSmileLeft: clamp(expression?.mouthSmileLeft ?? 0, 0, 1),
+		mouthSmileRight: clamp(expression?.mouthSmileRight ?? 0, 0, 1),
+		jawOpen: clamp(expression?.jawOpen ?? 0, 0, 1),
+	};
+}
+
+function smoothExpression(
+	previous: CartoonFaceExpression | undefined,
+	current: CartoonFaceExpression | undefined,
+	elapsedMs: number,
+): CartoonFaceExpression {
+	const next = normalizeExpression(current);
+	if (!previous || elapsedMs <= 0 || elapsedMs > MAX_EXPRESSION_SMOOTHING_GAP_MS) {
+		return next;
+	}
+	const prior = normalizeExpression(previous);
+	const weight = 1 - Math.exp(-elapsedMs / EXPRESSION_SMOOTHING_TIME_CONSTANT_MS);
+	return {
+		eyeBlinkLeft: prior.eyeBlinkLeft + (next.eyeBlinkLeft - prior.eyeBlinkLeft) * weight,
+		eyeBlinkRight: prior.eyeBlinkRight + (next.eyeBlinkRight - prior.eyeBlinkRight) * weight,
+		mouthSmileLeft:
+			prior.mouthSmileLeft + (next.mouthSmileLeft - prior.mouthSmileLeft) * weight,
+		mouthSmileRight:
+			prior.mouthSmileRight + (next.mouthSmileRight - prior.mouthSmileRight) * weight,
+		jawOpen: prior.jawOpen + (next.jawOpen - prior.jawOpen) * weight,
 	};
 }
 
@@ -209,6 +292,7 @@ function predictGeometry(
 
 	return {
 		timestampMs,
+		expression: current.expression ? { ...current.expression } : { ...NEUTRAL_EXPRESSION },
 		imageLeftEye: transformEye(current.imageLeftEye),
 		imageRightEye: transformEye(current.imageRightEye),
 		mouth: {
@@ -242,6 +326,7 @@ function createEyeLayout(
 	rollRadians: number,
 	interocularDistance: number,
 	referenceEyeWidth: number,
+	blink: number,
 ): CartoonEyeLayout {
 	const outer = toPixel(eye.outer, width, height);
 	const inner = toPixel(eye.inner, width, height);
@@ -252,21 +337,28 @@ function createEyeLayout(
 	const actualWidth = Math.max(1, distance(outer, inner));
 	const actualHeight = Math.max(1, distance(upper, lower));
 	const perspectiveScale = clamp(actualWidth / Math.max(1, referenceEyeWidth), 0.72, 1.22);
-	const radiusX = interocularDistance * 0.18 * perspectiveScale;
-	const radiusY = interocularDistance * 0.28 * Math.sqrt(perspectiveScale);
+	const radiusX = interocularDistance * EYE_RADIUS_X_TO_INTEROCULAR * perspectiveScale;
+	const openScale = 0.1 + 0.9 * (1 - clamp(blink, 0, 1)) ** 1.35;
+	const radiusY =
+		interocularDistance * EYE_RADIUS_Y_TO_INTEROCULAR * Math.sqrt(perspectiveScale) * openScale;
+	const pupilOpacity = clamp((1 - blink - 0.08) / 0.42, 0, 1);
+	const pupilRadius = interocularDistance * PUPIL_RADIUS_TO_INTEROCULAR * pupilOpacity;
 
 	let pupilOffsetX = 0;
 	let pupilOffsetY = 0;
 	if (eye.iris) {
 		const localIris = toLocal(toPixel(eye.iris, width, height), origin, rollRadians);
-		pupilOffsetX =
-			clamp((localIris.x - localCenter.x) / (actualWidth * 0.5), -0.48, 0.48) *
-			radiusX *
-			0.62;
-		pupilOffsetY =
-			clamp((localIris.y - localCenter.y) / (actualHeight * 0.5), -0.45, 0.45) *
-			radiusY *
-			0.5;
+		let gazeX = (localIris.x - localCenter.x) / (actualWidth * 0.32);
+		let gazeY = (localIris.y - localCenter.y) / (actualHeight * 0.72);
+		const gazeMagnitude = Math.hypot(gazeX, gazeY);
+		if (gazeMagnitude > 1) {
+			gazeX /= gazeMagnitude;
+			gazeY /= gazeMagnitude;
+		}
+		const horizontalTravel = Math.max(0, radiusX - pupilRadius * PUPIL_EDGE_INSET);
+		const verticalTravel = Math.max(0, radiusY - pupilRadius * PUPIL_EDGE_INSET);
+		pupilOffsetX = gazeX * horizontalTravel;
+		pupilOffsetY = gazeY * verticalTravel;
 	}
 
 	return {
@@ -276,7 +368,8 @@ function createEyeLayout(
 		radiusY,
 		pupilX: localCenter.x + pupilOffsetX,
 		pupilY: localCenter.y + pupilOffsetY,
-		pupilRadius: interocularDistance * 0.062,
+		pupilRadius,
+		pupilOpacity,
 	};
 }
 
@@ -286,6 +379,7 @@ export function createCartoonFaceLayout(
 	height: number,
 ): CartoonFaceLayout | null {
 	const geometry = presentation.geometry;
+	const expression = normalizeExpression(geometry.expression);
 	const imageLeftEyeCenter = midpoint(
 		midpoint(
 			toPixel(geometry.imageLeftEye.outer, width, height),
@@ -333,11 +427,20 @@ export function createCartoonFaceLayout(
 	);
 	const localMouth = toLocal(mouthCenter, origin, rollRadians);
 	const detectedMouthWidth = distance(mouthLeft, mouthRight);
-	const mouthWidth = clamp(
-		detectedMouthWidth * 0.95,
-		interocularDistance * 0.52,
-		interocularDistance * 0.78,
+	const smileAmount = (expression.mouthSmileLeft + expression.mouthSmileRight) / 2;
+	const neutralMouthWidth = clamp(
+		detectedMouthWidth * 1.02,
+		interocularDistance * NEUTRAL_MOUTH_WIDTH_TO_INTEROCULAR,
+		interocularDistance * 0.82,
 	);
+	const mouthWidth = clamp(
+		neutralMouthWidth * (1 + smileAmount * 0.34),
+		interocularDistance * NEUTRAL_MOUTH_WIDTH_TO_INTEROCULAR,
+		interocularDistance * 1.02,
+	);
+	const neutralMouthHeight = mouthWidth * NEUTRAL_MOUTH_HEIGHT_TO_WIDTH;
+	const mouthHeight = neutralMouthHeight + mouthWidth * expression.jawOpen * 0.42;
+	const jawExtension = mouthHeight - neutralMouthHeight;
 
 	return {
 		originX: origin.x,
@@ -352,6 +455,9 @@ export function createCartoonFaceLayout(
 			rollRadians,
 			interocularDistance,
 			referenceEyeWidth,
+			// MediaPipe names anatomy from the subject's perspective. Before the
+			// one final presentation mirror, the subject's right eye is image-left.
+			expression.eyeBlinkRight,
 		),
 		imageRightEye: createEyeLayout(
 			geometry.imageRightEye,
@@ -361,12 +467,15 @@ export function createCartoonFaceLayout(
 			rollRadians,
 			interocularDistance,
 			referenceEyeWidth,
+			expression.eyeBlinkLeft,
 		),
 		mouth: {
 			x: localMouth.x,
-			y: localMouth.y,
+			y: localMouth.y + jawExtension * 0.24,
 			width: mouthWidth,
-			height: mouthWidth * 0.34,
+			height: mouthHeight,
+			leftCornerLift: neutralMouthHeight * (0.2 + expression.mouthSmileRight * 0.42),
+			rightCornerLift: neutralMouthHeight * (0.2 + expression.mouthSmileLeft * 0.42),
 		},
 	};
 }
@@ -374,14 +483,13 @@ export function createCartoonFaceLayout(
 function traceSmile(context: DrawContext, mouth: CartoonMouthLayout): void {
 	const halfWidth = mouth.width / 2;
 	const halfHeight = mouth.height / 2;
+	const leftCornerY = mouth.y - halfHeight * 0.55 - mouth.leftCornerLift;
+	const rightCornerY = mouth.y - halfHeight * 0.55 - mouth.rightCornerLift;
+	const topCenterY =
+		mouth.y - halfHeight * 0.15 - (mouth.leftCornerLift + mouth.rightCornerLift) * 0.18;
 	context.beginPath();
-	context.moveTo(mouth.x - halfWidth, mouth.y - halfHeight * 0.55);
-	context.quadraticCurveTo(
-		mouth.x,
-		mouth.y - halfHeight * 0.15,
-		mouth.x + halfWidth,
-		mouth.y - halfHeight * 0.55,
-	);
+	context.moveTo(mouth.x - halfWidth, leftCornerY);
+	context.quadraticCurveTo(mouth.x, topCenterY, mouth.x + halfWidth, rightCornerY);
 	context.quadraticCurveTo(
 		mouth.x + halfWidth * 0.72,
 		mouth.y + halfHeight,
@@ -392,7 +500,7 @@ function traceSmile(context: DrawContext, mouth: CartoonMouthLayout): void {
 		mouth.x - halfWidth * 0.72,
 		mouth.y + halfHeight,
 		mouth.x - halfWidth,
-		mouth.y - halfHeight * 0.55,
+		leftCornerY,
 	);
 	context.closePath();
 }
@@ -403,9 +511,15 @@ function drawEye(context: DrawContext, eye: CartoonEyeLayout): void {
 	context.ellipse(eye.x, eye.y, eye.radiusX, eye.radiusY, 0, 0, Math.PI * 2);
 	context.fill();
 	context.fillStyle = WEBCAM_SILHOUETTE_COLOR;
-	context.beginPath();
-	context.arc(eye.pupilX, eye.pupilY, eye.pupilRadius, 0, Math.PI * 2);
-	context.fill();
+	if (eye.pupilOpacity > 0 && eye.pupilRadius > 0) {
+		context.save();
+		context.clip();
+		context.globalAlpha *= eye.pupilOpacity;
+		context.beginPath();
+		context.arc(eye.pupilX, eye.pupilY, eye.pupilRadius, 0, Math.PI * 2);
+		context.fill();
+		context.restore();
+	}
 }
 
 export function drawCartoonFace(context: DrawContext, layout: CartoonFaceLayout): void {
@@ -439,11 +553,11 @@ export function drawCartoonFace(context: DrawContext, layout: CartoonFaceLayout)
 		layout.mouth.y + layout.mouth.height * 0.02,
 	);
 	context.stroke();
-	for (const offset of [-0.3, -0.1, 0.1, 0.3]) {
+	for (const offset of [-0.32, -0.16, 0, 0.16, 0.32]) {
 		context.beginPath();
 		context.moveTo(
 			layout.mouth.x + layout.mouth.width * offset,
-			layout.mouth.y - layout.mouth.height * 0.18,
+			layout.mouth.y - layout.mouth.height,
 		);
 		context.lineTo(
 			layout.mouth.x + layout.mouth.width * offset * 0.86,
@@ -463,22 +577,36 @@ export class CartoonFaceTracker {
 		geometry: CartoonFaceGeometry | null,
 		timestampMs: number,
 		discontinuity = false,
+		personPresent = true,
 	): CartoonFacePresentation | null {
 		if (discontinuity) this.reset();
 		if (geometry) {
+			const previousGeometry = this.lastGeometry;
+			const smoothedGeometry: CartoonFaceGeometry = {
+				...geometry,
+				expression: smoothExpression(
+					previousGeometry?.expression,
+					geometry.expression,
+					previousGeometry ? geometry.timestampMs - previousGeometry.timestampMs : 0,
+				),
+			};
 			this.previousGeometry =
-				this.lastGeometry && geometry.timestampMs > this.lastGeometry.timestampMs
+				previousGeometry && smoothedGeometry.timestampMs > previousGeometry.timestampMs
 					? this.lastGeometry
 					: null;
-			this.lastGeometry = geometry;
-			return { geometry, opacity: 1, unmaskedOpacity: 1, isFading: false };
+			this.lastGeometry = smoothedGeometry;
+			return {
+				geometry: smoothedGeometry,
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			};
 		}
 		if (!this.lastGeometry) return null;
 		const missingDurationMs = Math.max(0, timestampMs - this.lastGeometry.timestampMs);
+		const holdMs = personPresent ? CARTOON_FACE_LOSS_HOLD_MS : 0;
 		const opacity = clamp(
-			1 -
-				Math.max(0, missingDurationMs - CARTOON_FACE_LOSS_HOLD_MS) /
-					CARTOON_FACE_LOSS_FADE_MS,
+			1 - Math.max(0, missingDurationMs - holdMs) / CARTOON_FACE_LOSS_FADE_MS,
 			0,
 			1,
 		);

@@ -1,5 +1,6 @@
 import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { extractCartoonFaceGeometry } from "./cartoonFace";
+import { createFaceLandmarkerOptions } from "./faceLandmarkerConfig";
 import type {
 	FaceLandmarkerWorkerRequest,
 	FaceLandmarkerWorkerResponse,
@@ -31,17 +32,16 @@ async function createFaceLandmarker(delegate: SegmentationDelegate): Promise<Fac
 	const wasmBaseUrl = new URL("vision/wasm/", assetBaseUrl).href;
 	const modelUrl = new URL("models/face_landmarker-float16-v1.task", assetBaseUrl).href;
 	const vision = await FilesetResolver.forVisionTasks(wasmBaseUrl, true);
-	return FaceLandmarker.createFromOptions(vision, {
-		baseOptions: { modelAssetPath: modelUrl, delegate },
-		canvas: typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1) : undefined,
-		runningMode: "VIDEO",
-		numFaces: 1,
-		minFaceDetectionConfidence: 0.5,
-		minFacePresenceConfidence: 0.5,
-		minTrackingConfidence: 0.5,
-		outputFaceBlendshapes: false,
-		outputFacialTransformationMatrixes: false,
-	});
+	return FaceLandmarker.createFromOptions(
+		vision,
+		createFaceLandmarkerOptions({
+			modelAssetPath: modelUrl,
+			delegate,
+			...(typeof OffscreenCanvas !== "undefined"
+				? { canvas: new OffscreenCanvas(1, 1) }
+				: {}),
+		}),
+	);
 }
 
 async function initialize(preferredDelegate: SegmentationDelegate): Promise<void> {
@@ -85,7 +85,11 @@ async function trackFrame(
 		post({
 			type: "result",
 			requestId,
-			face: extractCartoonFaceGeometry(result.faceLandmarks[0], timestampMs),
+			face: extractCartoonFaceGeometry(
+				result.faceLandmarks[0],
+				timestampMs,
+				result.faceBlendshapes[0]?.categories,
+			),
 		});
 	} catch (error) {
 		post({

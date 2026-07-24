@@ -10,7 +10,7 @@ import type {
 	SegmentationWorkerResponse,
 	WebcamEffectInference,
 } from "./messages";
-import { PersonMaskTracker } from "./personMask";
+import { PersonMaskTracker, personMaskContainsPerson } from "./personMask";
 import { SilhouetteCompositor } from "./silhouetteCompositor";
 
 type RenderCanvas = HTMLCanvasElement | OffscreenCanvas;
@@ -61,6 +61,15 @@ interface DiscontinuousPreviewRequest {
 	reject: (error: unknown) => void;
 }
 
+class RequiredWebcamWorkerError extends Error {
+	override readonly name = "RequiredWebcamWorkerError";
+}
+
+function requiredWorkerError(error: unknown): RequiredWebcamWorkerError {
+	if (error instanceof RequiredWebcamWorkerError) return error;
+	return new RequiredWebcamWorkerError(error instanceof Error ? error.message : String(error));
+}
+
 export interface WebcamEffectPipelineOptions {
 	workerFactory?: () => Worker;
 	faceWorkerFactory?: () => Worker;
@@ -104,6 +113,45 @@ function capturePresentedVideoFrame(
 	}
 }
 
+function getSourceDimensions(source: CanvasImageSource): { width: number; height: number } {
+	const candidate = source as unknown as Record<string, number | undefined>;
+	return {
+		width: Math.max(
+			1,
+			candidate.displayWidth ??
+				candidate.videoWidth ??
+				candidate.naturalWidth ??
+				candidate.width ??
+				1,
+		),
+		height: Math.max(
+			1,
+			candidate.displayHeight ??
+				candidate.videoHeight ??
+				candidate.naturalHeight ??
+				candidate.height ??
+				1,
+		),
+	};
+}
+
+export function fitInferenceDimensions(
+	source: CanvasImageSource,
+	maxWidth: number,
+	maxHeight: number,
+): { width: number; height: number } {
+	const sourceDimensions = getSourceDimensions(source);
+	const scale = Math.min(
+		1,
+		maxWidth / sourceDimensions.width,
+		maxHeight / sourceDimensions.height,
+	);
+	return {
+		width: Math.max(1, Math.round(sourceDimensions.width * scale)),
+		height: Math.max(1, Math.round(sourceDimensions.height * scale)),
+	};
+}
+
 export class WebcamEffectPipeline {
 	private readonly workerFactory: () => Worker;
 	private readonly faceWorkerFactory: () => Worker;
@@ -115,6 +163,8 @@ export class WebcamEffectPipeline {
 	private readonly compositor: Pick<SilhouetteCompositor, "compose" | "getCanvas">;
 	private worker: Worker | null = null;
 	private faceWorker: Worker | null = null;
+	private readonly retiredWorkers = new WeakSet<Worker>();
+	private readonly retiredFaceWorkers = new WeakSet<Worker>();
 	private initializationPromise: Promise<void> | null = null;
 	private initializationResolve: (() => void) | null = null;
 	private initializationReject: ((error: Error) => void) | null = null;
@@ -147,6 +197,7 @@ export class WebcamEffectPipeline {
 	private disposed = false;
 	private status: WebcamEffectPipelineStatus = "idle";
 	private error: string | undefined;
+	private workerRecoveryAttempted = false;
 
 	constructor(options: WebcamEffectPipelineOptions = {}) {
 		this.workerFactory = options.workerFactory ?? defaultWorkerFactory;
@@ -169,11 +220,19 @@ export class WebcamEffectPipeline {
 		}
 
 		this.status = "loading";
-		this.worker = this.workerFactory();
-		this.worker.onmessage = (event: MessageEvent<SegmentationWorkerResponse>) => {
+		const worker = this.workerFactory();
+		if (this.retiredWorkers.has(worker)) {
+			throw new RequiredWebcamWorkerError(
+				this.error ?? "Worker recovery did not create a fresh segmentation worker",
+			);
+		}
+		this.worker = worker;
+		worker.onmessage = (event: MessageEvent<SegmentationWorkerResponse>) => {
+			if (this.worker !== worker) return;
 			this.handleWorkerMessage(event.data);
 		};
-		this.worker.onerror = (event) => {
+		worker.onerror = (event) => {
+			if (this.worker !== worker) return;
 			this.handleWorkerFailure(
 				new Error(event.message || "Person segmentation worker failed"),
 			);
@@ -198,11 +257,19 @@ export class WebcamEffectPipeline {
 		if (this.faceAvailable && this.faceWorker) return true;
 		if (this.faceAvailable === false) return false;
 		if (!this.faceInitializationPromise) {
-			this.faceWorker = this.faceWorkerFactory();
-			this.faceWorker.onmessage = (event: MessageEvent<FaceLandmarkerWorkerResponse>) => {
+			const faceWorker = this.faceWorkerFactory();
+			if (this.retiredFaceWorkers.has(faceWorker)) {
+				throw new RequiredWebcamWorkerError(
+					this.error ?? "Worker recovery did not create a fresh face landmark worker",
+				);
+			}
+			this.faceWorker = faceWorker;
+			faceWorker.onmessage = (event: MessageEvent<FaceLandmarkerWorkerResponse>) => {
+				if (this.faceWorker !== faceWorker) return;
 				this.handleFaceWorkerMessage(event.data);
 			};
-			this.faceWorker.onerror = (event) => {
+			faceWorker.onerror = (event) => {
+				if (this.faceWorker !== faceWorker) return;
 				this.handleFaceWorkerFailure(
 					new Error(event.message || "Face landmark worker failed"),
 				);
@@ -257,7 +324,7 @@ export class WebcamEffectPipeline {
 			return;
 		}
 
-		const error = new Error(message.message);
+		const error = new RequiredWebcamWorkerError(message.message);
 		if (message.requestId !== undefined) {
 			const request = this.pending.get(message.requestId);
 			if (request) {
@@ -289,7 +356,7 @@ export class WebcamEffectPipeline {
 			return;
 		}
 
-		const error = new Error(message.message);
+		const error = new RequiredWebcamWorkerError(message.message);
 		if (message.requestId !== undefined) {
 			const request = this.facePending.get(message.requestId);
 			if (request) {
@@ -311,34 +378,46 @@ export class WebcamEffectPipeline {
 	}
 
 	private handleRequiredWorkerFailure(error: Error): void {
+		const workerError = requiredWorkerError(error);
 		if (this.initializationTimeoutId) clearTimeout(this.initializationTimeoutId);
 		this.initializationTimeoutId = null;
 		if (this.faceInitializationTimeoutId) clearTimeout(this.faceInitializationTimeoutId);
 		this.faceInitializationTimeoutId = null;
 		this.faceAvailable = false;
 		this.status = "fallback";
-		this.error = error.message;
+		this.error = workerError.message;
 		this.clearCachedInference();
-		this.initializationReject?.(error);
+		this.initializationReject?.(workerError);
 		this.initializationResolve = null;
 		this.initializationReject = null;
-		this.faceInitializationReject?.(error);
+		this.faceInitializationReject?.(workerError);
 		this.faceInitializationResolve = null;
 		this.faceInitializationReject = null;
 		for (const request of this.pending.values()) {
 			clearTimeout(request.timeoutId);
-			request.reject(error);
+			request.reject(workerError);
 		}
 		this.pending.clear();
 		for (const request of this.facePending.values()) {
 			clearTimeout(request.timeoutId);
-			request.reject(error);
+			request.reject(workerError);
 		}
 		this.facePending.clear();
+		if (this.worker) this.retiredWorkers.add(this.worker);
 		this.worker?.terminate();
 		this.worker = null;
+		if (this.faceWorker) this.retiredFaceWorkers.add(this.faceWorker);
 		this.faceWorker?.terminate();
 		this.faceWorker = null;
+	}
+
+	private prepareRequiredWorkerRecovery(error: Error): void {
+		this.handleRequiredWorkerFailure(error);
+		this.initializationPromise = null;
+		this.faceInitializationPromise = null;
+		this.faceAvailable = null;
+		this.status = "idle";
+		this.error = error.message;
 	}
 
 	private clearCachedInference(): void {
@@ -349,10 +428,23 @@ export class WebcamEffectPipeline {
 		this.lastTimestampMs = null;
 	}
 
+	private safePreviewResult(
+		status: WebcamEffectPipelineStatus,
+		error?: string,
+	): WebcamEffectProcessResult {
+		return {
+			source: this.compositor.getCanvas() as CanvasImageSource,
+			processed: true,
+			status,
+			...(error ? { error } : {}),
+		};
+	}
+
 	private acceptInference(
 		inference: WebcamEffectInference,
 		discontinuity = false,
 	): WebcamEffectInference {
+		const personPresent = personMaskContainsPerson(inference.mask);
 		const acceptedInference = {
 			...inference,
 			mask: this.maskTracker.update(inference.mask, discontinuity),
@@ -363,6 +455,7 @@ export class WebcamEffectPipeline {
 			inference.face,
 			acceptedInference.mask.timestampMs,
 			discontinuity,
+			personPresent,
 		);
 		return acceptedInference;
 	}
@@ -482,7 +575,9 @@ export class WebcamEffectPipeline {
 				return;
 			}
 			if (Math.abs(inference.mask.timestampMs - request.timestampMs) >= 0.001) {
-				throw new Error("Person segmentation returned a mask for the wrong timestamp");
+				throw new RequiredWebcamWorkerError(
+					"Person segmentation returned a mask for the wrong timestamp",
+				);
 			}
 			const acceptedInference = this.acceptInference(inference, true);
 			request.resolve({ inference: acceptedInference, face: this.lastFacePresentation });
@@ -515,11 +610,18 @@ export class WebcamEffectPipeline {
 			this.ensureFaceInitialized(),
 		]);
 		if (!faceAvailable) {
-			throw new Error(this.error ?? "Face landmark tracking is unavailable");
+			throw new RequiredWebcamWorkerError(
+				this.error ?? "Face landmark tracking is unavailable",
+			);
 		}
+		const inferenceDimensions = fitInferenceDimensions(
+			source,
+			this.inferenceWidth,
+			this.inferenceHeight,
+		);
 		const bitmapOptions = {
-			resizeWidth: this.inferenceWidth,
-			resizeHeight: this.inferenceHeight,
+			resizeWidth: inferenceDimensions.width,
+			resizeHeight: inferenceDimensions.height,
 			resizeQuality: "medium",
 		} as const;
 		const frame = await this.bitmapFactory(source as ImageBitmapSource, bitmapOptions);
@@ -542,7 +644,7 @@ export class WebcamEffectPipeline {
 		if (this.disposed || !this.worker || !this.faceWorker) {
 			frame.close();
 			faceFrame?.close();
-			throw new Error(
+			throw new RequiredWebcamWorkerError(
 				this.disposed
 					? "Webcam effect pipeline was disposed before inference started"
 					: (this.error ?? "A required webcam effect worker became unavailable"),
@@ -552,7 +654,7 @@ export class WebcamEffectPipeline {
 		const maskPromise = new Promise<PersonMask>((resolve, reject) => {
 			const timeoutId = setTimeout(() => {
 				this.pending.delete(requestId);
-				reject(new Error("Person segmentation timed out"));
+				reject(new RequiredWebcamWorkerError("Person segmentation timed out"));
 			}, this.requestTimeoutMs);
 			this.pending.set(requestId, { resolve, reject, timeoutId });
 		});
@@ -564,7 +666,7 @@ export class WebcamEffectPipeline {
 			facePromise = new Promise<CartoonFaceGeometry | null>((resolve, reject) => {
 				const timeoutId = setTimeout(() => {
 					this.facePending.delete(faceRequestId);
-					reject(new Error("Face landmark detection timed out"));
+					reject(new RequiredWebcamWorkerError("Face landmark detection timed out"));
 				}, this.requestTimeoutMs);
 				this.facePending.set(faceRequestId, { resolve, reject, timeoutId });
 			});
@@ -589,16 +691,20 @@ export class WebcamEffectPipeline {
 			this.faceAvailable === false ||
 			!this.faceWorker
 		) {
-			throw new Error(
+			throw new RequiredWebcamWorkerError(
 				this.error ?? "A required webcam effect worker failed during inference",
 			);
 		}
 		this.status = "ready";
 		this.error = undefined;
+		this.workerRecoveryAttempted = false;
 		return { mask: maskResult.value, face: faceResult.value };
 	}
 
-	async processFrame(request: WebcamEffectProcessRequest): Promise<WebcamEffectProcessResult> {
+	async processFrame(
+		request: WebcamEffectProcessRequest,
+		allowWorkerRecovery = true,
+	): Promise<WebcamEffectProcessResult> {
 		if (request.settings.type !== "silhouette") {
 			return { source: request.source, processed: false, status: this.status };
 		}
@@ -608,12 +714,20 @@ export class WebcamEffectPipeline {
 					"Black silhouette export failed: webcam effect pipeline is disposed",
 				);
 			}
-			return {
-				source: request.source,
-				processed: false,
-				status: "fallback",
-				error: "Webcam effect pipeline is disposed",
-			};
+			return this.safePreviewResult("fallback", "Webcam effect pipeline is disposed");
+		}
+		if (this.status === "fallback" && this.workerRecoveryAttempted) {
+			if (request.mode === "export") {
+				throw new Error(
+					`Black silhouette export failed: ${
+						this.error ?? "required webcam effect workers are unavailable"
+					}`,
+				);
+			}
+			return this.safePreviewResult(
+				"fallback",
+				this.error ?? "Required webcam effect workers are unavailable",
+			);
 		}
 
 		const initialMovedBackward =
@@ -626,10 +740,10 @@ export class WebcamEffectPipeline {
 				Boolean(request.realtime),
 			);
 			if (normalPreviewGeneration === null) {
-				return { source: request.source, processed: false, status: "loading" };
+				return this.safePreviewResult("loading");
 			}
 			if (normalPreviewGeneration !== this.normalPreviewGeneration) {
-				return { source: request.source, processed: false, status: "loading" };
+				return this.safePreviewResult("loading");
 			}
 			if (
 				this.lastTimestampMs !== null &&
@@ -683,7 +797,7 @@ export class WebcamEffectPipeline {
 					discontinuitySequence !== null &&
 					discontinuitySequence !== this.latestPreviewDiscontinuitySequence
 				) {
-					return { source: request.source, processed: false, status: "loading" };
+					return this.safePreviewResult("loading");
 				}
 			}
 			let renderInference: WebcamEffectInference | null = null;
@@ -700,7 +814,7 @@ export class WebcamEffectPipeline {
 							discontinuitySequence,
 						);
 						if (!prepared) {
-							return { source: request.source, processed: false, status: "loading" };
+							return this.safePreviewResult("loading");
 						}
 						renderInference = prepared.inference;
 						renderFace = prepared.face;
@@ -711,7 +825,7 @@ export class WebcamEffectPipeline {
 							false,
 						);
 						if (previewInferenceEpoch !== this.previewInferenceEpoch) {
-							return { source: request.source, processed: false, status: "loading" };
+							return this.safePreviewResult("loading");
 						}
 						this.acceptInference(freshInference);
 					}
@@ -729,7 +843,7 @@ export class WebcamEffectPipeline {
 
 			const inference = renderInference ?? this.lastInference;
 			if (!inference) {
-				return { source: request.source, processed: false, status: "loading" };
+				return this.safePreviewResult("loading");
 			}
 			if (inference.mask.timestampMs === request.timestampMs) {
 				this.lastTimestampMs = request.timestampMs;
@@ -738,7 +852,7 @@ export class WebcamEffectPipeline {
 				normalPreviewGeneration !== null &&
 				normalPreviewGeneration !== this.normalPreviewGeneration
 			) {
-				return { source: request.source, processed: false, status: "loading" };
+				return this.safePreviewResult("loading");
 			}
 			const canvas = this.compositor.compose(
 				renderSource,
@@ -749,18 +863,38 @@ export class WebcamEffectPipeline {
 			return { source: canvas as CanvasImageSource, processed: true, status: this.status };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			this.status = "fallback";
-			this.error = message;
-			this.clearCachedInference();
+			if (
+				error instanceof RequiredWebcamWorkerError &&
+				allowWorkerRecovery &&
+				!this.workerRecoveryAttempted &&
+				!this.disposed
+			) {
+				this.workerRecoveryAttempted = true;
+				this.prepareRequiredWorkerRecovery(error);
+				releasePreviewFrame();
+				if (previewFramePromise && this.previewFrameInFlight === previewFramePromise) {
+					this.previewFrameInFlight = null;
+				}
+				return await this.processFrame(
+					{
+						...request,
+						source: renderSource,
+						discontinuity: true,
+					},
+					false,
+				);
+			}
+			if (error instanceof RequiredWebcamWorkerError) {
+				this.handleRequiredWorkerFailure(error);
+			} else {
+				this.status = "fallback";
+				this.error = message;
+				this.clearCachedInference();
+			}
 			if (request.mode === "export") {
 				throw new Error(`Black silhouette export failed: ${message}`);
 			}
-			return {
-				source: request.source,
-				processed: false,
-				status: "fallback",
-				error: message,
-			};
+			return this.safePreviewResult("fallback", message);
 		} finally {
 			if (discontinuitySequence !== null) {
 				this.previewDiscontinuityCaptures.delete(discontinuitySequence);
@@ -804,8 +938,10 @@ export class WebcamEffectPipeline {
 		} catch {
 			// Face worker may already have failed.
 		}
+		if (this.worker) this.retiredWorkers.add(this.worker);
 		this.worker?.terminate();
 		this.worker = null;
+		if (this.faceWorker) this.retiredFaceWorkers.add(this.faceWorker);
 		this.faceWorker?.terminate();
 		this.faceWorker = null;
 		if (this.initializationTimeoutId) clearTimeout(this.initializationTimeoutId);

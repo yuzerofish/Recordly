@@ -10,7 +10,10 @@ import type { ReactElement } from "react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
-import type { WebcamEffectPipelineStatus } from "@/lib/webcamEffects";
+import {
+	getWebcamEffectLayerVisibility,
+	type WebcamEffectPipelineStatus,
+} from "@/lib/webcamEffects";
 import { useLaunchPopoverCoordinator } from "./LaunchPopoverCoordinator";
 import type { DeviceOption } from "./launchPopoverTypes";
 import { DropdownItem, HudPopover } from "./PopoverScaffold";
@@ -61,6 +64,11 @@ export function WebcamPopover({
 	const t = useScopedT("launch");
 	const { isOpen, requestOpen, requestClose } = useLaunchPopoverCoordinator();
 	const open = isOpen(POPOVER_ID);
+	const webcamEffectLayerVisibility = getWebcamEffectLayerVisibility({
+		effectType: webcamEffectType,
+		status: webcamEffectStatus,
+		hasSafeFrame: webcamEffectRendered,
+	});
 
 	return (
 		<HudPopover
@@ -121,7 +129,7 @@ export function WebcamPopover({
 							muted
 							playsInline
 							style={{
-								opacity: webcamEffectRendered ? 0 : 1,
+								opacity: webcamEffectLayerVisibility.rawOpacity,
 								transform: "scaleX(-1)",
 							}}
 						/>
@@ -129,7 +137,7 @@ export function WebcamPopover({
 							ref={setWebcamPreviewCanvasNode}
 							className="absolute inset-0 h-full w-full object-cover"
 							style={{
-								opacity: webcamEffectRendered ? 1 : 0,
+								opacity: webcamEffectLayerVisibility.processedOpacity,
 								transform: "scaleX(-1)",
 							}}
 							aria-hidden="true"

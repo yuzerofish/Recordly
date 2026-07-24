@@ -22,6 +22,7 @@ import {
 	loadEditorPreferences,
 	saveEditorPreferences,
 } from "@/components/video-editor/editorPreferences";
+import { getWebcamEffectLayerVisibility } from "@/lib/webcamEffects";
 import { useScopedT } from "../../contexts/I18nContext";
 import { useMicrophoneDevices } from "../../hooks/useMicrophoneDevices";
 import { useScreenRecorder } from "../../hooks/useScreenRecorder";
@@ -190,6 +191,11 @@ function LaunchWindowContent() {
 		webcamPopoverOpen: openId === "webcam",
 		hudOverlayMousePassthroughSupported,
 		webcamEffect,
+	});
+	const webcamEffectLayerVisibility = getWebcamEffectLayerVisibility({
+		effectType: webcamEffect.type,
+		status: webcamEffectStatus,
+		hasSafeFrame: webcamEffectRendered,
 	});
 
 	useEffect(() => {
@@ -591,7 +597,7 @@ function LaunchWindowContent() {
 									muted
 									playsInline
 									style={{
-										opacity: webcamEffectRendered ? 0 : 1,
+										opacity: webcamEffectLayerVisibility.rawOpacity,
 										transform: "scaleX(-1)",
 									}}
 								/>
@@ -599,7 +605,7 @@ function LaunchWindowContent() {
 									ref={setRecordingWebcamPreviewCanvasNode}
 									className={styles.recordingWebcamPreviewVideo}
 									style={{
-										opacity: webcamEffectRendered ? 1 : 0,
+										opacity: webcamEffectLayerVisibility.processedOpacity,
 										transform: "scaleX(-1)",
 									}}
 									aria-hidden="true"

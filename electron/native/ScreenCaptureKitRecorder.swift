@@ -14,6 +14,8 @@ struct CaptureConfig: Codable {
 	let microphoneDeviceId: String?
 	let microphoneLabel: String?
 	let microphoneOutputPath: String?
+	let hostProcessId: pid_t?
+	let hostBundleIdentifier: String?
 }
 
 let targetCaptureFPS = 60
@@ -103,6 +105,14 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			guard let window = availableContent.windows.first(where: { $0.windowID == windowId }) else {
 				throw NSError(domain: "RecordlyCapture", code: 3, userInfo: [NSLocalizedDescriptionKey: "Window not found"])
 			}
+			if let hostProcessId = config.hostProcessId,
+			   window.owningApplication?.processID == hostProcessId {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 13,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_WINDOW_CAPTURE_DENIED"]
+				)
+			}
 
 			filter = SCContentFilter(desktopIndependentWindow: window)
 
@@ -124,7 +134,33 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				throw NSError(domain: "RecordlyCapture", code: 4, userInfo: [NSLocalizedDescriptionKey: "Display not found"])
 			}
 
-			filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+			guard let hostProcessId = config.hostProcessId, hostProcessId > 0 else {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 14,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_APPLICATION_FILTER_UNRESOLVED"]
+				)
+			}
+			let hostApplications = availableContent.applications.filter { application in
+				if application.processID == hostProcessId {
+					return true
+				}
+				guard let hostBundleIdentifier = config.hostBundleIdentifier,
+				      !hostBundleIdentifier.isEmpty else {
+					return false
+				}
+				return application.bundleIdentifier == hostBundleIdentifier
+			}
+			guard !hostApplications.isEmpty else {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 15,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_APPLICATION_FILTER_UNRESOLVED"]
+				)
+			}
+			filter = SCContentFilter(display: display, excludingApplications: hostApplications, exceptingWindows: [])
+			fputs("HOST_APPLICATION_EXCLUDED\n", stderr)
+			fflush(stderr)
 			let displayBounds = CGDisplayBounds(display.displayID)
 			let scaleFactor = ScreenCaptureRecorder.scaleFactor(for: display.displayID)
 			outputWidth = max(2, Int(displayBounds.width) * scaleFactor)
@@ -715,4 +751,3 @@ DispatchQueue.global(qos: .utility).async {
 }
 
 service.waitUntilFinished()
-

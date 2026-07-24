@@ -18,8 +18,17 @@ export interface CartoonFaceEyeGeometry {
 	iris?: NormalizedFacePoint;
 }
 
+export interface CartoonFaceExpression {
+	eyeBlinkLeft: number;
+	eyeBlinkRight: number;
+	mouthSmileLeft: number;
+	mouthSmileRight: number;
+	jawOpen: number;
+}
+
 export interface CartoonFaceGeometry {
 	timestampMs: number;
+	expression?: CartoonFaceExpression;
 	imageLeftEye: CartoonFaceEyeGeometry;
 	imageRightEye: CartoonFaceEyeGeometry;
 	mouth: {

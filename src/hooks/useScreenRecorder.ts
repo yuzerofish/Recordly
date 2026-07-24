@@ -8,6 +8,7 @@ import {
 	selectRecordingMimeType,
 	selectWebcamRecordingMimeType,
 } from "./recordingMimeType";
+import { finalizeCompleteRecordingSession } from "./recordingFinalization";
 
 const TARGET_FRAME_RATE = 60;
 const TARGET_WIDTH = 3840;
@@ -361,6 +362,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const webcamStopPromise = useRef<Promise<string | null> | null>(null);
 	const webcamStopResolver = useRef<((path: string | null) => void) | null>(null);
 	const resolvedWebcamPath = useRef<string | null>(null);
+	const webcamCaptureRequested = useRef(false);
+	const webcamRecorderError = useRef<Error | null>(null);
 	const accumulatedPausedDurationMs = useRef(0);
 	const pauseStartedAtMs = useRef<number | null>(null);
 	const micFallbackRecorder = useRef<MediaRecorder | null>(null);
@@ -671,37 +674,26 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	}, []);
 
 	const finalizeRecordingSession = useCallback(
-		async (videoPath: string, webcamPath: string | null) => {
+		async (videoPath: string, webcamPath: string | null | Promise<string | null>) => {
 			const start = performance.now();
 			console.log("[PERF:RENDERER] Finalize Session & Switch to Editor: STARTED");
 			const shouldHideOverlayCursor = hideEditorOverlayCursorByDefault.current;
-			try {
-				if (webcamPath) {
-					await window.electronAPI.setCurrentRecordingSession({
-						videoPath,
-						webcamPath,
-						timeOffsetMs: webcamTimeOffsetMs.current,
-						hideOverlayCursorByDefault: shouldHideOverlayCursor,
-					});
-				} else {
-					await window.electronAPI.setCurrentVideoPath(videoPath, {
-						hideOverlayCursorByDefault: shouldHideOverlayCursor,
-					});
-				}
-			} catch (error) {
-				console.error("Failed to persist recording session metadata:", error);
-
-				try {
-					await window.electronAPI.setCurrentVideoPath(videoPath, {
-						hideOverlayCursorByDefault: shouldHideOverlayCursor,
-					});
-				} catch (fallbackError) {
-					console.error("Failed to persist fallback video path:", fallbackError);
-				}
-			}
-
+			await finalizeCompleteRecordingSession({
+				videoPath,
+				webcamPath,
+				timeOffsetMs: webcamTimeOffsetMs.current,
+				hideOverlayCursorByDefault: shouldHideOverlayCursor,
+				webcamCaptureRequested: webcamCaptureRequested.current,
+				commitSession: (session) => window.electronAPI.setCurrentRecordingSession(session),
+				openEditor: () => window.electronAPI.switchToEditor(),
+				onMissingWebcam: () => {
+					toast.error(
+						"The webcam recording could not be finalized. The screen recording is safe, but the webcam layer is unavailable.",
+						{ duration: 10000 },
+					);
+				},
+			});
 			setFinalizing(false);
-			await window.electronAPI.switchToEditor();
 			console.log(
 				`[PERF:RENDERER] Finalize Session & Switch to Editor: COMPLETED in ${(performance.now() - start).toFixed(2)}ms`,
 			);
@@ -889,9 +881,6 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 		if (recorder.state !== "inactive") {
 			recorder.stop();
-		} else if (pending && webcamStopResolver.current) {
-			webcamStopResolver.current(resolvedWebcamPath.current);
-			webcamStopResolver.current = null;
 		}
 
 		const result = pending ? await pending : resolvedWebcamPath.current;
@@ -941,6 +930,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	 * has started so both begin at approximately the same time.
 	 */
 	const prepareWebcamRecorder = useCallback(async () => {
+		webcamCaptureRequested.current = webcamEnabled;
+		webcamRecorderError.current = null;
 		if (!webcamEnabled) {
 			resolvedWebcamPath.current = null;
 			pendingWebcamPathPromise.current = Promise.resolve(null);
@@ -986,8 +977,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 			};
 			recorder.onerror = () => {
-				webcamStopResolver.current?.(null);
-				webcamStopResolver.current = null;
+				webcamRecorderError.current = new Error(
+					"The webcam MediaRecorder reported an error before it stopped",
+				);
 			};
 			recorder.onstop = async () => {
 				const sessionTimestamp = recordingSessionTimestamp.current ?? Date.now();
@@ -996,6 +988,12 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 
 				try {
 					if (webcamChunks.current.length === 0) {
+						if (webcamRecorderError.current) {
+							console.error(
+								"Webcam recording ended without a usable sidecar:",
+								webcamRecorderError.current,
+							);
+						}
 						webcamStopResolver.current?.(null);
 						return;
 					}
@@ -1023,6 +1021,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					webcamStopResolver.current?.(null);
 				} finally {
 					webcamStopResolver.current = null;
+					webcamRecorderError.current = null;
 					webcamRecorder.current = null;
 					webcamStartTime.current = null;
 					if (webcamStream.current) {
@@ -1120,65 +1119,34 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				}
 
 				const finalPath = result.path;
-
-				// 1. Finalize the session and switch to editor immediately (Optimistic UI)
-				// We pass null for webcamPath initially to avoid blocking on webcam disk writes/muxing.
-				await finalizeRecordingSession(finalPath, null);
-
-				// 2. Perform background finalization (webcam, muxing, sidecars)
-				// We don't await this to keep the UI responsive
-				void (async () => {
-					try {
-						// Await the webcam path in the background
-						const webcamPath = await webcamPathPromise;
-						console.log(
-							"[useScreenRecorder] Background native processing: webcamPath is",
-							webcamPath,
-						);
-
-						// Store sidecars
-						await storeMicrophoneSidecar(
-							micFallbackBlobPromise,
-							finalPath,
-							fallbackStartDelayMs,
-							fallbackTrackSettings,
-						);
-
-						// Perform muxing/renaming if on Windows
-						if (isNativeWindows) {
-							await window.electronAPI.muxNativeWindowsRecording(expectedDurationMs);
-						}
-
-						console.log(
-							"[useScreenRecorder] Emitting setCurrentRecordingSession with:",
-							{ finalPath, webcamPath },
-						);
-
-						// Update the session state to notify the editor that all background assets (webcam, mic, etc.) are now ready.
-						// This broadcasts a 'recording-session-changed' event that the open editor listens to for re-scanning assets.
-						await window.electronAPI.setCurrentRecordingSession({
-							videoPath: finalPath,
-							webcamPath,
-							timeOffsetMs: webcamTimeOffsetMs.current,
-							hideOverlayCursorByDefault: hideEditorOverlayCursorByDefault.current,
-						});
-
-						console.log(
-							`[PERF:RENDERER] Background Stop Sequence: COMPLETED in ${(performance.now() - stopStart).toFixed(2)}ms`,
-						);
-					} catch (bgError) {
-						console.error("Error in background finalization:", bgError);
-					} finally {
-						// After all background tasks are done (webcam, mic sidecars, muxing),
-						// we can safely close the HUD window to release hardware and resources.
-						if (typeof window.electronAPI?.hudOverlayClose === "function") {
-							console.log(
-								"[useScreenRecorder] All background tasks finished, closing HUD",
-							);
-							window.electronAPI.hudOverlayClose();
-						}
+				try {
+					const webcamPath = await webcamPathPromise;
+					await storeMicrophoneSidecar(
+						micFallbackBlobPromise,
+						finalPath,
+						fallbackStartDelayMs,
+						fallbackTrackSettings,
+					);
+					if (isNativeWindows) {
+						await window.electronAPI.muxNativeWindowsRecording(expectedDurationMs);
 					}
-				})();
+					// Commit the complete session before opening the editor. The editor
+					// still subscribes before replaying this snapshot, so an event emitted
+					// before mount or during a resubscription gap cannot lose the sidecar.
+					await finalizeRecordingSession(finalPath, webcamPath);
+					console.log(
+						`[PERF:RENDERER] Atomic Stop Sequence: COMPLETED in ${(performance.now() - stopStart).toFixed(2)}ms`,
+					);
+				} catch (finalizationError) {
+					console.error("Error finalizing recording assets:", finalizationError);
+					await notifyRecordingFinalizationFailure(
+						`Failed to finalize the recording assets. ${getErrorMessage(finalizationError)}`,
+					);
+				} finally {
+					if (typeof window.electronAPI?.hudOverlayClose === "function") {
+						window.electronAPI.hudOverlayClose();
+					}
+				}
 			})();
 			return;
 		}
@@ -1814,80 +1782,62 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			};
 			recorder.onstop = async () => {
 				cleanupCapturedMedia();
-				if (chunks.current.length === 0) {
-					setFinalizing(false);
-					return;
-				}
-
-				const duration = getRecordingDurationMs(Date.now());
-				const recordedChunks = chunks.current;
-				const recordingBlobType = recorder.mimeType || mimeType;
-				const buggyBlob = new Blob(
-					recordedChunks,
-					recordingBlobType ? { type: recordingBlobType } : undefined,
-				);
-				chunks.current = [];
-				const timestamp = recordingSessionTimestamp.current ?? Date.now();
-				const videoFileName = `${RECORDING_FILE_PREFIX}${timestamp}${getVideoExtensionForMimeType(recordingBlobType)}`;
-
 				try {
-					const videoBlob = isWebmMimeType(recordingBlobType)
-						? await fixWebmDuration(buggyBlob, duration)
-						: buggyBlob;
-					const arrayBuffer = await videoBlob.arrayBuffer();
-					const videoResult = await window.electronAPI.storeRecordedVideo(
-						arrayBuffer,
-						videoFileName,
-					);
-					if (!videoResult.success) {
-						console.error("Failed to store video:", videoResult.message);
-						await notifyRecordingFinalizationFailure(
-							videoResult.message || "Failed to store the recording.",
-						);
+					if (chunks.current.length === 0) {
+						setFinalizing(false);
 						return;
 					}
 
-					if (videoResult.path) {
-						const finalVideoPath = videoResult.path;
-						// 1. Launch editor immediately (Optimistic UI)
-						await finalizeRecordingSession(finalVideoPath, null);
+					const duration = getRecordingDurationMs(Date.now());
+					const recordedChunks = chunks.current;
+					const recordingBlobType = recorder.mimeType || mimeType;
+					const buggyBlob = new Blob(
+						recordedChunks,
+						recordingBlobType ? { type: recordingBlobType } : undefined,
+					);
+					chunks.current = [];
+					const timestamp = recordingSessionTimestamp.current ?? Date.now();
+					const videoFileName = `${RECORDING_FILE_PREFIX}${timestamp}${getVideoExtensionForMimeType(recordingBlobType)}`;
 
-						// 2. Background webcam processing
-						void (async () => {
+					try {
+						const videoBlob = isWebmMimeType(recordingBlobType)
+							? await fixWebmDuration(buggyBlob, duration)
+							: buggyBlob;
+						const arrayBuffer = await videoBlob.arrayBuffer();
+						const videoResult = await window.electronAPI.storeRecordedVideo(
+							arrayBuffer,
+							videoFileName,
+						);
+						if (!videoResult.success) {
+							console.error("Failed to store video:", videoResult.message);
+							await notifyRecordingFinalizationFailure(
+								videoResult.message || "Failed to store the recording.",
+							);
+							return;
+						}
+
+						if (videoResult.path) {
+							const finalVideoPath = videoResult.path;
 							const webcamPath = pendingWebcamPathPromise.current
 								? await pendingWebcamPathPromise.current
 								: resolvedWebcamPath.current;
-
-							try {
-								if (webcamPath) {
-									await window.electronAPI.setCurrentRecordingSession({
-										videoPath: finalVideoPath,
-										webcamPath,
-										timeOffsetMs: webcamTimeOffsetMs.current,
-										hideOverlayCursorByDefault:
-											hideEditorOverlayCursorByDefault.current,
-									});
-								}
-							} finally {
-								// After all background tasks are done (webcam),
-								// we can safely close the HUD window to release hardware and resources.
-								if (typeof window.electronAPI?.hudOverlayClose === "function") {
-									console.log(
-										"[useScreenRecorder:browser] All background tasks finished, closing HUD",
-									);
-									window.electronAPI.hudOverlayClose();
-								}
-							}
-						})();
-					} else {
-						await notifyRecordingFinalizationFailure("Failed to save the recording.");
+							await finalizeRecordingSession(finalVideoPath, webcamPath);
+						} else {
+							await notifyRecordingFinalizationFailure(
+								"Failed to save the recording.",
+							);
+						}
+					} catch (error) {
+						console.error("Error saving recording:", error);
+						const message = error instanceof Error ? error.message : String(error);
+						await notifyRecordingFinalizationFailure(
+							`Failed to finalize the recording. ${message}`,
+						);
 					}
-				} catch (error) {
-					console.error("Error saving recording:", error);
-					const message = error instanceof Error ? error.message : String(error);
-					await notifyRecordingFinalizationFailure(
-						`Failed to finalize the recording. ${message}`,
-					);
+				} finally {
+					if (typeof window.electronAPI?.hudOverlayClose === "function") {
+						window.electronAPI.hudOverlayClose();
+					}
 				}
 			};
 			recorder.onerror = () => {
@@ -2037,6 +1987,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		webcamStream.current = null;
 		pendingWebcamPathPromise.current = null;
 		resolvedWebcamPath.current = null;
+		webcamCaptureRequested.current = false;
+		webcamRecorderError.current = null;
 
 		if (nativeScreenRecording.current) {
 			nativeScreenRecording.current = false;

@@ -361,6 +361,26 @@ describe("WebcamEffectPipeline", () => {
 		);
 	});
 
+	it("preserves a 16:9 source aspect ratio in the local inference bitmap", async () => {
+		const harness = createHarness();
+
+		await harness.pipeline.processFrame({
+			source,
+			timestampMs: 250,
+			settings: silhouette,
+			mode: "export",
+		});
+
+		expect(harness.createBitmap.mock.calls[0]).toEqual([
+			source,
+			{
+				resizeWidth: 256,
+				resizeHeight: 144,
+				resizeQuality: "medium",
+			},
+		]);
+	});
+
 	it("freezes a full preview frame before waiting for model initialization", async () => {
 		const harness = createHarness();
 		harness.worker.autoInitialize = false;
@@ -489,7 +509,11 @@ describe("WebcamEffectPipeline", () => {
 				mode: "preview",
 				realtime: true,
 			}),
-		).resolves.toMatchObject({ processed: false, status: "loading" });
+		).resolves.toMatchObject({
+			source: harness.output,
+			processed: true,
+			status: "loading",
+		});
 		expect(
 			harness.worker.messages.filter((message) => message.type === "segment"),
 		).toHaveLength(1);
@@ -499,7 +523,8 @@ describe("WebcamEffectPipeline", () => {
 		if (!segment || segment.type !== "segment") throw new Error("Expected paired mask request");
 		harness.worker.resolveSegment(segment.requestId, 390);
 		await expect(pending).resolves.toMatchObject({
-			processed: false,
+			source: harness.output,
+			processed: true,
 			status: "fallback",
 			error: "face inference failed",
 		});
@@ -679,7 +704,7 @@ describe("WebcamEffectPipeline", () => {
 				mode: "preview",
 				realtime: true,
 			}),
-		).resolves.toMatchObject({ processed: false, status: "loading" });
+		).resolves.toMatchObject({ processed: true, status: "loading" });
 		expect(
 			harness.worker.messages.filter((message) => message.type === "segment"),
 		).toHaveLength(1);
@@ -744,8 +769,8 @@ describe("WebcamEffectPipeline", () => {
 		if (!segment || segment.type !== "segment") throw new Error("Expected active preview");
 		harness.worker.resolveSegment(segment.requestId, 200);
 
-		await expect(first).resolves.toMatchObject({ processed: false, status: "loading" });
-		await expect(middle).resolves.toMatchObject({ processed: false, status: "loading" });
+		await expect(first).resolves.toMatchObject({ processed: true, status: "loading" });
+		await expect(middle).resolves.toMatchObject({ processed: true, status: "loading" });
 		await expect(final).resolves.toMatchObject({ processed: true, status: "ready" });
 		expect(
 			harness.worker.messages.filter((message) => message.type === "segment"),
@@ -876,8 +901,8 @@ describe("WebcamEffectPipeline", () => {
 		}
 		harness.worker.resolveSegment(finalRequest.requestId, 8000);
 
-		await expect(firstSeek).resolves.toMatchObject({ processed: false, status: "loading" });
-		await expect(middleSeek).resolves.toMatchObject({ processed: false, status: "loading" });
+		await expect(firstSeek).resolves.toMatchObject({ processed: true, status: "loading" });
+		await expect(middleSeek).resolves.toMatchObject({ processed: true, status: "loading" });
 		await expect(finalSeek).resolves.toMatchObject({ processed: true, status: "ready" });
 		expect(harness.createBitmap.mock.calls[0]?.[0]).toBe(firstSource);
 		expect(harness.createBitmap.mock.calls[1]?.[0]).toBe(middleSource);
@@ -955,8 +980,8 @@ describe("WebcamEffectPipeline", () => {
 		}
 		harness.worker.resolveSegment(seekRequest.requestId, 5000, new Float32Array([0]));
 
-		await expect(active).resolves.toMatchObject({ processed: false, status: "loading" });
-		await expect(waiting).resolves.toMatchObject({ processed: false, status: "loading" });
+		await expect(active).resolves.toMatchObject({ processed: true, status: "loading" });
+		await expect(waiting).resolves.toMatchObject({ processed: true, status: "loading" });
 		await expect(seek).resolves.toMatchObject({ processed: true, status: "ready" });
 		expect(
 			harness.worker.messages.filter(
@@ -1027,8 +1052,8 @@ describe("WebcamEffectPipeline", () => {
 		await expect(final).resolves.toMatchObject({ processed: true, status: "ready" });
 		resolveMiddle(middleFrame);
 		resolveFirst(firstFrame);
-		await expect(middle).resolves.toMatchObject({ processed: false, status: "loading" });
-		await expect(first).resolves.toMatchObject({ processed: false, status: "loading" });
+		await expect(middle).resolves.toMatchObject({ processed: true, status: "loading" });
+		await expect(first).resolves.toMatchObject({ processed: true, status: "loading" });
 
 		expect(harness.compositor.compose).toHaveBeenCalledTimes(1);
 		expect(harness.compositor.compose.mock.calls[0]?.[0]).toBe(finalFrame);
@@ -1057,6 +1082,119 @@ describe("WebcamEffectPipeline", () => {
 			}),
 		).rejects.toThrow("Black silhouette export failed: segmentation failed");
 		expect(harness.compositor.compose).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps preview fail-closed on the safe compositor canvas when required workers fail", async () => {
+		const harness = createHarness();
+		harness.faceWorker.failTracks = true;
+
+		const result = await harness.pipeline.processFrame({
+			source,
+			timestampMs: 1000,
+			settings: silhouette,
+			mode: "preview",
+		});
+
+		expect(result).toMatchObject({
+			source: harness.output,
+			processed: true,
+			status: "fallback",
+		});
+		expect(result.source).not.toBe(source);
+		expect(harness.compositor.compose).not.toHaveBeenCalled();
+	});
+
+	it("rebuilds both required workers once and retries the same media frame", async () => {
+		const firstWorker = new FakeWorker();
+		const recoveredWorker = new FakeWorker();
+		firstWorker.failSegments = true;
+		const firstFaceWorker = new FakeFaceWorker();
+		const recoveredFaceWorker = new FakeFaceWorker();
+		const workerFactory = vi
+			.fn<() => Worker>()
+			.mockReturnValueOnce(firstWorker as unknown as Worker)
+			.mockReturnValueOnce(recoveredWorker as unknown as Worker);
+		const faceWorkerFactory = vi
+			.fn<() => Worker>()
+			.mockReturnValueOnce(firstFaceWorker as unknown as Worker)
+			.mockReturnValueOnce(recoveredFaceWorker as unknown as Worker);
+		const output = { width: 1, height: 1 } as unknown as HTMLCanvasElement;
+		const compositor = {
+			compose: vi.fn(() => output),
+			getCanvas: vi.fn(() => output),
+		};
+		const createBitmap = vi.fn(async () => {
+			return {
+				width: 256,
+				height: 144,
+				close: vi.fn(),
+			} as unknown as ImageBitmap;
+		});
+		const pipeline = new WebcamEffectPipeline({
+			workerFactory,
+			faceWorkerFactory,
+			createImageBitmap: createBitmap as unknown as typeof createImageBitmap,
+			assetBaseUrl: "http://127.0.0.1/mediapipe/",
+			compositor,
+		});
+
+		await expect(
+			pipeline.processFrame({
+				source,
+				timestampMs: 1200,
+				settings: silhouette,
+				mode: "export",
+			}),
+		).resolves.toMatchObject({ processed: true, source: output, status: "ready" });
+		expect(workerFactory).toHaveBeenCalledTimes(2);
+		expect(faceWorkerFactory).toHaveBeenCalledTimes(2);
+		expect(firstWorker.terminated).toBe(true);
+		expect(firstFaceWorker.terminated).toBe(true);
+		expect(
+			recoveredWorker.messages.filter((message) => message.type === "segment"),
+		).toHaveLength(1);
+		expect(
+			recoveredFaceWorker.messages.filter((message) => message.type === "track"),
+		).toHaveLength(1);
+	});
+
+	it("bounds worker rebuilding to one attempt while persistent failure remains fail-closed", async () => {
+		const workers = [new FakeWorker(), new FakeWorker()];
+		const faceWorkers = [new FakeFaceWorker(), new FakeFaceWorker()];
+		for (const worker of workers) worker.failSegments = true;
+		const workerFactory = vi.fn(() => workers.shift() as unknown as Worker);
+		const faceWorkerFactory = vi.fn(() => faceWorkers.shift() as unknown as Worker);
+		const output = { width: 1, height: 1 } as unknown as HTMLCanvasElement;
+		const pipeline = new WebcamEffectPipeline({
+			workerFactory,
+			faceWorkerFactory,
+			createImageBitmap: vi.fn(async () => {
+				return { width: 256, height: 144, close: vi.fn() } as unknown as ImageBitmap;
+			}) as unknown as typeof createImageBitmap,
+			assetBaseUrl: "http://127.0.0.1/mediapipe/",
+			compositor: {
+				compose: vi.fn(() => output),
+				getCanvas: vi.fn(() => output),
+			},
+		});
+
+		const first = await pipeline.processFrame({
+			source,
+			timestampMs: 1400,
+			settings: silhouette,
+			mode: "preview",
+		});
+		const second = await pipeline.processFrame({
+			source,
+			timestampMs: 1433,
+			settings: silhouette,
+			mode: "preview",
+		});
+
+		expect(first).toMatchObject({ processed: true, source: output, status: "fallback" });
+		expect(second).toMatchObject({ processed: true, source: output, status: "fallback" });
+		expect(workerFactory).toHaveBeenCalledTimes(2);
+		expect(faceWorkerFactory).toHaveBeenCalledTimes(2);
 	});
 
 	it("settles an initialization request when disposed before the worker is ready", async () => {

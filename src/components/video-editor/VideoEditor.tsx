@@ -171,6 +171,7 @@ import {
 	toFileUrl,
 	validateProjectData,
 } from "./projectPersistence";
+import { subscribeAndReplayRecordingSession } from "./recordingSessionSync";
 import { SettingsPanel } from "./SettingsPanel";
 import { getDevOpenRecordingConfig, getSmokeExportConfig } from "./smokeExportConfig";
 import { createSmokeExportProgressSampler } from "./smokeExportProgress";
@@ -2569,35 +2570,43 @@ export default function VideoEditor() {
 	]);
 
 	useEffect(() => {
-		if (!window.electronAPI.onRecordingSessionChanged) {
+		const api = window.electronAPI;
+		if (!api.onRecordingSessionChanged || !api.getCurrentRecordingSession) {
 			return;
 		}
 
-		return window.electronAPI.onRecordingSessionChanged((session) => {
-			const sessionSourcePath = session?.videoPath ? fromFileUrl(session.videoPath) : null;
-			const sessionWebcamPath = session?.webcamPath ? fromFileUrl(session.webcamPath) : null;
-			console.log("[VideoEditor] onRecordingSessionChanged received!", {
-				hasSession: Boolean(session),
-				hasSessionVideoPath: Boolean(session?.videoPath),
-				hasVideoSourcePath: Boolean(videoSourcePath),
-				match: sessionSourcePath === videoSourcePath,
-				hasWebcamPath: Boolean(sessionWebcamPath),
-			});
+		const subscription = subscribeAndReplayRecordingSession({
+			subscribe: api.onRecordingSessionChanged,
+			getSnapshot: async () => {
+				const result = await api.getCurrentRecordingSession();
+				return result.success ? (result.session ?? null) : null;
+			},
+			onSession: (session) => {
+				const sessionSourcePath = session?.videoPath
+					? fromFileUrl(session.videoPath)
+					: null;
+				const sessionWebcamPath = session?.webcamPath
+					? fromFileUrl(session.webcamPath)
+					: null;
+				if (!session || sessionSourcePath !== videoSourcePath) {
+					return;
+				}
 
-			if (!session || sessionSourcePath !== videoSourcePath) {
-				return;
-			}
-
-			setWebcam((prev) => ({
-				...prev,
-				enabled: Boolean(sessionWebcamPath),
-				sourcePath: sessionWebcamPath,
-				timeOffsetMs: sessionWebcamPath
-					? (session.timeOffsetMs ?? prev.timeOffsetMs)
-					: DEFAULT_WEBCAM_TIME_OFFSET_MS,
-			}));
-			setSourceAudioFallbackRefreshKey((key) => key + 1);
+				setWebcam((prev) => ({
+					...prev,
+					enabled: Boolean(sessionWebcamPath),
+					sourcePath: sessionWebcamPath,
+					timeOffsetMs: sessionWebcamPath
+						? (session.timeOffsetMs ?? prev.timeOffsetMs)
+						: DEFAULT_WEBCAM_TIME_OFFSET_MS,
+				}));
+				setSourceAudioFallbackRefreshKey((key) => key + 1);
+			},
 		});
+		void subscription.ready.catch((error) => {
+			console.error("[VideoEditor] Failed to replay the recording session:", error);
+		});
+		return subscription.unsubscribe;
 	}, [videoSourcePath]);
 
 	useEffect(() => {

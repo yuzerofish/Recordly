@@ -10,6 +10,7 @@ import {
 	resizeHudOverlayFallbackBounds,
 	shouldExpandHudOverlayFallback,
 } from "./hudOverlayBounds";
+import { applyHudWindowWorkspacePolicy } from "./hudWindowPolicy";
 import { getPackagedRendererBaseUrl } from "./rendererServer";
 
 const electronWindowsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -483,6 +484,7 @@ export function createHudOverlayWindow(): BrowserWindow {
 			backgroundThrottling: false,
 		},
 	});
+	applyHudWindowWorkspacePolicy(win);
 
 	const showHudWindow = () => {
 		if (hasShownHudWindow || win.isDestroyed()) {

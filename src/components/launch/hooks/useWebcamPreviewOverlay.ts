@@ -396,8 +396,6 @@ export function useWebcamPreviewOverlay({
 						drawToCanvas(webcamPreviewCanvasRef.current, result.source);
 						drawToCanvas(recordingWebcamPreviewCanvasRef.current, result.source);
 						setWebcamEffectRendered(true);
-					} else if (result.status !== "loading") {
-						setWebcamEffectRendered(false);
 					}
 				} finally {
 					rendering = false;

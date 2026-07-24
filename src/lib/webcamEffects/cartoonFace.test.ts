@@ -198,6 +198,218 @@ describe("cartoon face geometry", () => {
 		expect(mirroredX).toBeCloseTo(148, 6);
 		expect(target.width - mirroredX).toBeCloseTo(croppedX, 6);
 	});
+
+	it("matches the reference face's large eyes, pupils, and compact toothy mouth", () => {
+		const layout = createCartoonFaceLayout(
+			{
+				geometry: makeGeometry(),
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			},
+			640,
+			360,
+		)!;
+		const interocularDistance = Math.abs(layout.imageRightEye.x - layout.imageLeftEye.x);
+
+		expect(layout.imageLeftEye.radiusX / interocularDistance).toBeGreaterThanOrEqual(0.195);
+		expect(layout.imageLeftEye.radiusX / interocularDistance).toBeLessThanOrEqual(0.215);
+		expect(layout.imageLeftEye.radiusY / interocularDistance).toBeGreaterThanOrEqual(0.295);
+		expect(layout.imageLeftEye.radiusY / interocularDistance).toBeLessThanOrEqual(0.315);
+		expect(layout.imageLeftEye.pupilRadius / interocularDistance).toBeGreaterThanOrEqual(0.065);
+		expect(layout.imageLeftEye.pupilRadius / interocularDistance).toBeLessThanOrEqual(0.071);
+		expect(layout.mouth.width / interocularDistance).toBeGreaterThanOrEqual(0.66);
+		expect(layout.mouth.width / interocularDistance).toBeLessThanOrEqual(0.72);
+		expect(layout.mouth.height / layout.mouth.width).toBeGreaterThanOrEqual(0.39);
+		expect(layout.mouth.height / layout.mouth.width).toBeLessThanOrEqual(0.44);
+	});
+
+	it("lets pupils follow extreme gaze to every white-eye edge without escaping it", () => {
+		const base = makeGeometry();
+		const layouts = [
+			createCartoonFaceLayout(
+				{
+					geometry: makeGeometry({
+						imageLeftEye: { ...base.imageLeftEye, iris: { x: 0.27, y: 0.35 } },
+						imageRightEye: { ...base.imageRightEye, iris: { x: 0.73, y: 0.35 } },
+					}),
+					opacity: 1,
+					unmaskedOpacity: 1,
+					isFading: false,
+				},
+				640,
+				360,
+			)!,
+			createCartoonFaceLayout(
+				{
+					geometry: makeGeometry({
+						imageLeftEye: { ...base.imageLeftEye, iris: { x: 0.35, y: 0.27 } },
+						imageRightEye: { ...base.imageRightEye, iris: { x: 0.65, y: 0.43 } },
+					}),
+					opacity: 1,
+					unmaskedOpacity: 1,
+					isFading: false,
+				},
+				640,
+				360,
+			)!,
+		];
+
+		for (const [index, layout] of layouts.entries()) {
+			for (const eye of [layout.imageLeftEye, layout.imageRightEye]) {
+				const occupiedRadius =
+					(index === 0 ? Math.abs(eye.pupilX - eye.x) : Math.abs(eye.pupilY - eye.y)) +
+					eye.pupilRadius;
+				const whiteRadius = index === 0 ? eye.radiusX : eye.radiusY;
+				expect(occupiedRadius / whiteRadius).toBeGreaterThanOrEqual(0.96);
+				expect(occupiedRadius).toBeLessThanOrEqual(whiteRadius);
+			}
+		}
+	});
+
+	it("maps an anatomical right-eye blink to the image-left eye before the final mirror", () => {
+		const layout = createCartoonFaceLayout(
+			{
+				geometry: makeGeometry({
+					expression: {
+						eyeBlinkLeft: 0,
+						eyeBlinkRight: 1,
+						mouthSmileLeft: 0,
+						mouthSmileRight: 0,
+						jawOpen: 0,
+					},
+				}),
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			},
+			640,
+			360,
+		)!;
+
+		expect(layout.imageLeftEye.radiusY).toBeLessThan(layout.imageRightEye.radiusY * 0.25);
+		expect(layout.imageLeftEye.pupilRadius).toBeLessThan(
+			layout.imageRightEye.pupilRadius * 0.2,
+		);
+	});
+
+	it("compresses both white eyes and hides their pupils for a double blink", () => {
+		const layout = createCartoonFaceLayout(
+			{
+				geometry: makeGeometry({
+					expression: {
+						eyeBlinkLeft: 1,
+						eyeBlinkRight: 1,
+						mouthSmileLeft: 0,
+						mouthSmileRight: 0,
+						jawOpen: 0,
+					},
+				}),
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			},
+			640,
+			360,
+		)!;
+
+		expect(layout.imageLeftEye.radiusY).toBeLessThan(layout.imageLeftEye.radiusX * 0.25);
+		expect(layout.imageRightEye.radiusY).toBeLessThan(layout.imageRightEye.radiusX * 0.25);
+		expect(layout.imageLeftEye.pupilOpacity).toBe(0);
+		expect(layout.imageRightEye.pupilOpacity).toBe(0);
+	});
+
+	it("widens and lifts a clear grin while jawOpen independently increases mouth height", () => {
+		const presentation = (expression?: CartoonFaceGeometry["expression"]) => ({
+			geometry: makeGeometry({ expression }),
+			opacity: 1,
+			unmaskedOpacity: 1,
+			isFading: false,
+		});
+		const neutral = createCartoonFaceLayout(presentation(undefined), 640, 360)!;
+		const grin = createCartoonFaceLayout(
+			presentation({
+				eyeBlinkLeft: 0,
+				eyeBlinkRight: 0,
+				mouthSmileLeft: 1,
+				mouthSmileRight: 1,
+				jawOpen: 0,
+			}),
+			640,
+			360,
+		)!;
+		const open = createCartoonFaceLayout(
+			presentation({
+				eyeBlinkLeft: 0,
+				eyeBlinkRight: 0,
+				mouthSmileLeft: 0,
+				mouthSmileRight: 0,
+				jawOpen: 1,
+			}),
+			640,
+			360,
+		)!;
+
+		expect(grin.mouth.width).toBeGreaterThan(neutral.mouth.width * 1.2);
+		expect(grin.mouth.leftCornerLift).toBeGreaterThan(neutral.mouth.leftCornerLift);
+		expect(grin.mouth.rightCornerLift).toBeGreaterThan(neutral.mouth.rightCornerLift);
+		expect(open.mouth.height).toBeGreaterThan(neutral.mouth.height * 1.5);
+		expect(open.mouth.y).toBeGreaterThan(neutral.mouth.y);
+		expect(open.mouth.leftCornerLift).toBeCloseTo(neutral.mouth.leftCornerLift, 6);
+		expect(open.mouth.rightCornerLift).toBeCloseTo(neutral.mouth.rightCornerLift, 6);
+	});
+
+	it("uses the friendly neutral toothy layout when blendshapes are missing", () => {
+		const withoutBlendshapes = createCartoonFaceLayout(
+			{
+				geometry: makeGeometry(),
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			},
+			640,
+			360,
+		)!;
+		const explicitNeutral = createCartoonFaceLayout(
+			{
+				geometry: makeGeometry({
+					expression: {
+						eyeBlinkLeft: 0,
+						eyeBlinkRight: 0,
+						mouthSmileLeft: 0,
+						mouthSmileRight: 0,
+						jawOpen: 0,
+					},
+				}),
+				opacity: 1,
+				unmaskedOpacity: 1,
+				isFading: false,
+			},
+			640,
+			360,
+		)!;
+
+		expect(withoutBlendshapes).toEqual(explicitNeutral);
+		expect(withoutBlendshapes.mouth.height).toBeGreaterThan(0);
+	});
+
+	it("extracts and clamps the five required MediaPipe blendshapes", () => {
+		const geometry = extractCartoonFaceGeometry(makeLandmarks(), 1250, [
+			{ categoryName: "eyeBlinkLeft", score: 0.25 },
+			{ categoryName: "eyeBlinkRight", score: 1.2 },
+			{ categoryName: "mouthSmileLeft", score: 0.6 },
+			{ categoryName: "mouthSmileRight", score: 0.7 },
+			{ categoryName: "jawOpen", score: -0.5 },
+		]);
+
+		expect(geometry?.expression).toEqual({
+			eyeBlinkLeft: 0.25,
+			eyeBlinkRight: 1,
+			mouthSmileLeft: 0.6,
+			mouthSmileRight: 0.7,
+			jawOpen: 0,
+		});
+	});
 });
 
 describe("CartoonFaceTracker", () => {
@@ -210,9 +422,9 @@ describe("CartoonFaceTracker", () => {
 			unmaskedOpacity: 1,
 			isFading: false,
 		});
-		expect(tracker.update(null, CARTOON_FACE_LOSS_HOLD_MS / 2)).toMatchObject({
+		expect(tracker.update(null, CARTOON_FACE_LOSS_FADE_MS / 2)).toMatchObject({
 			opacity: 1,
-			unmaskedOpacity: 1 - CARTOON_FACE_LOSS_HOLD_MS / 2 / CARTOON_FACE_LOSS_FADE_MS,
+			unmaskedOpacity: 0.5,
 			isFading: true,
 		});
 		expect(tracker.update(null, CARTOON_FACE_LOSS_HOLD_MS)).toMatchObject({ opacity: 1 });
@@ -288,12 +500,62 @@ describe("CartoonFaceTracker", () => {
 
 		expect(tracker.update(null, 5000, true)).toBeNull();
 	});
+
+	it("holds a missing face for bounded hysteresis only while the person mask remains present", () => {
+		const facePresent = new CartoonFaceTracker();
+		const personGone = new CartoonFaceTracker();
+		facePresent.update(makeGeometry(), 0);
+		personGone.update(makeGeometry(), 0);
+
+		expect(facePresent.update(null, 600, false, true)).toMatchObject({ opacity: 1 });
+		expect(facePresent.update(null, 801, false, true)).toBeNull();
+		expect(personGone.update(null, 151, false, false)).toBeNull();
+	});
+
+	it("smooths expressions only from media timestamps and yields identical preview/export state", () => {
+		const preview = new CartoonFaceTracker();
+		const exporter = new CartoonFaceTracker();
+		const samples = [
+			makeGeometry({
+				timestampMs: 0,
+				expression: {
+					eyeBlinkLeft: 0,
+					eyeBlinkRight: 0,
+					mouthSmileLeft: 0,
+					mouthSmileRight: 0,
+					jawOpen: 0,
+				},
+			}),
+			makeGeometry({
+				timestampMs: 40,
+				expression: {
+					eyeBlinkLeft: 1,
+					eyeBlinkRight: 0.5,
+					mouthSmileLeft: 1,
+					mouthSmileRight: 0.8,
+					jawOpen: 0.9,
+				},
+			}),
+		];
+
+		const previewPresentation = samples.map((sample) =>
+			preview.update(sample, sample.timestampMs),
+		);
+		const exportPresentation = samples.map((sample) =>
+			exporter.update(sample, sample.timestampMs),
+		);
+
+		expect(previewPresentation).toEqual(exportPresentation);
+		expect(previewPresentation[1]?.geometry.expression?.eyeBlinkLeft).toBeGreaterThan(0);
+		expect(previewPresentation[1]?.geometry.expression?.eyeBlinkLeft).toBeLessThan(1);
+	});
 });
 
 describe("drawCartoonFace", () => {
-	it("draws two white eyes, two dark pupils, and a divided toothy smile", () => {
+	it("draws two white eyes, edge-clipped pupils, and a six-column toothy smile", () => {
 		const fillStyles: string[] = [];
 		const strokeStyles: string[] = [];
+		const moveTo = vi.fn();
 		const context = {
 			save: vi.fn(),
 			restore: vi.fn(),
@@ -301,7 +563,7 @@ describe("drawCartoonFace", () => {
 			rotate: vi.fn(),
 			beginPath: vi.fn(),
 			closePath: vi.fn(),
-			moveTo: vi.fn(),
+			moveTo,
 			lineTo: vi.fn(),
 			quadraticCurveTo: vi.fn(),
 			ellipse: vi.fn(),
@@ -326,7 +588,15 @@ describe("drawCartoonFace", () => {
 		} as unknown as CanvasRenderingContext2D;
 		const layout = createCartoonFaceLayout(
 			{
-				geometry: makeGeometry(),
+				geometry: makeGeometry({
+					expression: {
+						eyeBlinkLeft: 0,
+						eyeBlinkRight: 0,
+						mouthSmileLeft: 0.62,
+						mouthSmileRight: 0.62,
+						jawOpen: 1,
+					},
+				}),
 				opacity: 0.75,
 				unmaskedOpacity: 0.75,
 				isFading: false,
@@ -339,10 +609,13 @@ describe("drawCartoonFace", () => {
 
 		expect(context.ellipse).toHaveBeenCalledTimes(2);
 		expect(context.arc).toHaveBeenCalledTimes(2);
-		expect(context.clip).toHaveBeenCalledTimes(1);
-		expect(context.lineTo).toHaveBeenCalledTimes(4);
+		expect(context.clip).toHaveBeenCalledTimes(3);
+		expect(context.lineTo).toHaveBeenCalledTimes(5);
 		expect(context.globalAlpha).toBe(0.75);
 		expect(fillStyles.filter((style) => style === "#000000")).toHaveLength(2);
 		expect(strokeStyles).toEqual(["#000000"]);
+		for (const [, startY] of moveTo.mock.calls.slice(-5)) {
+			expect(startY).toBeCloseTo(layout.mouth.y - layout.mouth.height, 6);
+		}
 	});
 });

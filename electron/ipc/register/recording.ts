@@ -68,6 +68,7 @@ import {
 	waitForNativeCaptureStart,
 	waitForNativeCaptureStop,
 } from "../recording/mac";
+import { createMacCaptureHostExclusion } from "../recording/macCaptureFilterPolicy";
 import { resolveRecordedVideoStoragePath } from "../recording/storagePath";
 import {
 	attachWindowsCaptureLifecycle,
@@ -717,6 +718,7 @@ export function registerRecordingHandlers(
 					outputPath,
 					capturesSystemAudio,
 					capturesMicrophone,
+					...createMacCaptureHostExclusion({ hostProcessId: process.pid }),
 				};
 
 				if (options?.microphoneDeviceId) {
@@ -738,7 +740,14 @@ export function registerRecordingHandlers(
 				const windowId = parseWindowId(source?.id);
 				const screenId = Number(source?.display_id);
 
-				if (Number.isFinite(windowId) && windowId && source?.id?.startsWith("window:")) {
+				if (source?.id?.startsWith("window:")) {
+					if (!Number.isFinite(windowId) || !windowId) {
+						return {
+							success: false,
+							message:
+								"The selected window is no longer available. Please choose it again.",
+						};
+					}
 					config.windowId = windowId;
 				} else if (Number.isFinite(screenId) && screenId > 0) {
 					config.displayId = screenId;
