@@ -42,4 +42,15 @@ describe("macOS ScreenCaptureKit host exclusion", () => {
 		expect(source).toContain("window.owningApplication?.processID == hostProcessId");
 		expect(source).toContain("HOST_APPLICATION_EXCLUDED");
 	});
+
+	it("extends a sparse or static display capture through the actual stop time", () => {
+		const sourcePath = fileURLToPath(
+			new URL("../../native/ScreenCaptureKitRecorder.swift", import.meta.url),
+		);
+		const source = readFileSync(sourcePath, "utf8");
+
+		expect(source).toContain("activeCaptureDuration(atHostTime: captureEndHostTime)");
+		expect(source).toContain("let durationAlignedTime = max(.zero, recordedDuration - terminalFrameDuration)");
+		expect(source).toContain("videoEndTime = additionalTime + terminalFrameDuration");
+	});
 });
