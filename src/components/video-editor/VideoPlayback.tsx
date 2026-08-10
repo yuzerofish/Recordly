@@ -1,7 +1,7 @@
+import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import { Application, Container, Graphics, Rectangle, Sprite, Texture, VideoSource } from "pixi.js";
 import { MotionBlurFilter } from "pixi-filters/motion-blur";
 import { ZoomBlurFilter } from "pixi-filters/zoom-blur";
-import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import type React from "react";
 import {
 	forwardRef,
@@ -23,16 +23,16 @@ import {
 	initializePixiApplicationWithTimeout,
 } from "@/lib/pixiApplicationLifecycle";
 import {
+	DEFAULT_WALLPAPER_PATH,
+	DEFAULT_WALLPAPER_RELATIVE_PATH,
+	isVideoWallpaperSource,
+} from "@/lib/wallpapers";
+import {
 	getSafeWebcamFrameAction,
 	getWebcamEffectLayerVisibility,
 	WebcamEffectPipeline,
 	type WebcamEffectPipelineStatus,
 } from "@/lib/webcamEffects";
-import {
-	DEFAULT_WALLPAPER_PATH,
-	DEFAULT_WALLPAPER_RELATIVE_PATH,
-	isVideoWallpaperSource,
-} from "@/lib/wallpapers";
 import { type CaptionEditTarget, normalizeCaptionEditText } from "./captionEditing";
 import { buildActiveCaptionLayout } from "./captionLayout";
 import {
@@ -75,6 +75,7 @@ import {
 	type SpringState,
 	stepSpringValue,
 } from "./videoPlayback/motionSmoothing";
+import { renderPausedPreviewFrame, syncPreviewTickerState } from "./videoPlayback/previewTicker";
 
 function getContributedCursorStylesSignature() {
 	return extensionHost
@@ -496,6 +497,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const motionBlurFilterRef = useRef<MotionBlurFilter | null>(null);
 		const cameraContainerRef = useRef<Container | null>(null);
 		const timeUpdateAnimationRef = useRef<number | null>(null);
+		const pausedPreviewRenderRafRef = useRef<number | null>(null);
 		const [pixiReady, setPixiReady] = useState(false);
 		const [videoReady, setVideoReady] = useState(false);
 		const [pixiRendererError, setPixiRendererError] = useState<string | null>(null);
@@ -697,7 +699,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 								resolution: window.devicePixelRatio || 1,
 								autoDensity: true,
 								preference: backend,
-								autoStart: true,
+								autoStart: false,
 								sharedTicker: false,
 							},
 							PIXI_RENDERER_INIT_TIMEOUT_MS,
@@ -1583,8 +1585,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				return;
 			}
 
-			if (suspendRendering) {
-				app.ticker.stop();
+			const tickerState = syncPreviewTickerState(app.ticker, {
+				isPlaying,
+				suspendRendering,
+			});
+
+			if (tickerState === "suspended") {
 				bgVideoRef.current?.pause();
 				webcamVideoRef.current?.pause();
 				layoutVideoContentRef.current?.();
@@ -1596,7 +1602,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				return;
 			}
 
-			app.ticker.start();
 			const video = videoRef.current;
 			if (video) {
 				const targetTime = clampMediaTimeToDuration(
@@ -1616,14 +1621,29 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				| { update?: () => void }
 				| undefined;
 			videoTextureSource?.update?.();
-			requestAnimationFrame(() => {
-				appRef.current?.render();
-			});
+			if (tickerState === "paused") {
+				if (pausedPreviewRenderRafRef.current !== null) {
+					cancelAnimationFrame(pausedPreviewRenderRafRef.current);
+				}
+				pausedPreviewRenderRafRef.current = requestAnimationFrame((timestamp) => {
+					pausedPreviewRenderRafRef.current = null;
+					const currentApp = appRef.current;
+					if (!currentApp) return;
+					renderPausedPreviewFrame(
+						currentApp.ticker,
+						{
+							isPlaying: isPlayingRef.current,
+							suspendRendering: suspendRenderingRef.current,
+						},
+						timestamp,
+					);
+				});
+			}
 			if (isPlayingRef.current) {
 				bgVideoRef.current?.play().catch(() => undefined);
 				webcamVideoRef.current?.play().catch(() => undefined);
 			}
-		}, [pixiReady, suspendRendering]);
+		}, [isPlaying, pixiReady, suspendRendering]);
 
 		// Keep video wallpapers locked to the same source timestamp as the main clip.
 		useEffect(() => {
@@ -2864,6 +2884,32 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		]);
 
 		useEffect(() => {
+			if (
+				isPlaying ||
+				suspendRendering ||
+				!pixiReady ||
+				!videoReady ||
+				pausedPreviewRenderRafRef.current !== null
+			) {
+				return;
+			}
+
+			pausedPreviewRenderRafRef.current = requestAnimationFrame((timestamp) => {
+				pausedPreviewRenderRafRef.current = null;
+				const app = appRef.current;
+				if (!app) return;
+				renderPausedPreviewFrame(
+					app.ticker,
+					{
+						isPlaying: isPlayingRef.current,
+						suspendRendering: suspendRenderingRef.current,
+					},
+					timestamp,
+				);
+			});
+		});
+
+		useEffect(() => {
 			const overlay = cursorOverlayRef.current;
 			if (!overlay) {
 				return;
@@ -3090,6 +3136,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 		useEffect(() => {
 			return () => {
+				if (pausedPreviewRenderRafRef.current !== null) {
+					cancelAnimationFrame(pausedPreviewRenderRafRef.current);
+					pausedPreviewRenderRafRef.current = null;
+				}
 				if (videoReadyRafRef.current) {
 					cancelAnimationFrame(videoReadyRafRef.current);
 					videoReadyRafRef.current = null;

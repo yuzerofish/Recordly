@@ -10,6 +10,7 @@ import {
 	resizeHudOverlayFallbackBounds,
 	shouldExpandHudOverlayFallback,
 } from "./hudOverlayBounds";
+import { resolveHudOverlayIgnoreMouse } from "./hudOverlayMousePolicy";
 import { applyHudWindowWorkspacePolicy } from "./hudWindowPolicy";
 import { getPackagedRendererBaseUrl } from "./rendererServer";
 
@@ -291,12 +292,11 @@ function setHudOverlayFallbackExpanded(expanded: boolean) {
 }
 
 function setHudOverlayMousePassthrough(ignore: boolean) {
-	hudOverlayIgnoringMouse =
-		hudOverlaySourceSelectionActive && !hudOverlayRecordingActive
-			? true
-			: hudOverlayRecordingActive
-				? false
-				: ignore;
+	hudOverlayIgnoringMouse = resolveHudOverlayIgnoreMouse({
+		requestedIgnore: ignore,
+		sourceSelectionActive: hudOverlaySourceSelectionActive,
+		recordingActive: hudOverlayRecordingActive,
+	});
 
 	if (hudOverlayMouseReassertTimer) {
 		clearTimeout(hudOverlayMouseReassertTimer);
@@ -307,22 +307,15 @@ function setHudOverlayMousePassthrough(ignore: boolean) {
 		return;
 	}
 
-	if (hudOverlayRecordingActive) {
-		hudOverlayFallbackExpanded = false;
-		applyHudOverlayBounds();
-		hudOverlayWindow.setIgnoreMouseEvents(false);
-		return;
-	}
-
 	if (!isHudOverlayMousePassthroughSupported()) {
 		if (process.platform !== "linux") {
-			setHudOverlayFallbackExpanded(!ignore);
+			setHudOverlayFallbackExpanded(!hudOverlayIgnoringMouse);
 		}
 		hudOverlayWindow.setIgnoreMouseEvents(false);
 		return;
 	}
 
-	if (ignore) {
+	if (hudOverlayIgnoringMouse) {
 		hudOverlayWindow.setIgnoreMouseEvents(true, { forward: true });
 		return;
 	}
