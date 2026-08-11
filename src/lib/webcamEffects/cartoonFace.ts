@@ -30,6 +30,7 @@ interface EyeLandmarkIndices {
 	upper: number;
 	lower: number;
 	iris: number;
+	outline: readonly number[];
 }
 
 export interface CartoonFacePresentation {
@@ -91,9 +92,32 @@ const NEUTRAL_EXPRESSION: CartoonFaceExpression = {
 };
 
 const LANDMARK_INDEX = {
-	imageLeftEye: { outer: 33, inner: 133, upper: 159, lower: 145, iris: 468 },
-	imageRightEye: { outer: 263, inner: 362, upper: 386, lower: 374, iris: 473 },
-	mouth: { left: 61, right: 291, upper: 13, lower: 14 },
+	imageLeftEye: {
+		outer: 33,
+		inner: 133,
+		upper: 159,
+		lower: 145,
+		iris: 468,
+		outline: [33, 160, 158, 133, 153, 144],
+	},
+	imageRightEye: {
+		outer: 263,
+		inner: 362,
+		upper: 386,
+		lower: 374,
+		iris: 473,
+		outline: [362, 385, 387, 263, 373, 380],
+	},
+	mouth: {
+		left: 61,
+		right: 291,
+		upper: 13,
+		lower: 14,
+		outline: [
+			61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 375, 321, 405, 314, 17, 84, 181, 91,
+			146,
+		],
+	},
 	face: { left: 234, right: 454, top: 10, bottom: 152 },
 } as const;
 
@@ -141,6 +165,9 @@ function eyeGeometry(
 		upper,
 		lower,
 		...(point(landmarks, indices.iris) ? { iris: point(landmarks, indices.iris)! } : {}),
+		outline: indices.outline
+			.map((index) => point(landmarks, index))
+			.filter((value): value is NormalizedFacePoint => Boolean(value)),
 	};
 }
 
@@ -179,7 +206,15 @@ export function extractCartoonFaceGeometry(
 		expression: extractExpression(blendshapes),
 		imageLeftEye,
 		imageRightEye,
-		mouth: { left: mouthLeft, right: mouthRight, upper: mouthUpper, lower: mouthLower },
+		mouth: {
+			left: mouthLeft,
+			right: mouthRight,
+			upper: mouthUpper,
+			lower: mouthLower,
+			outline: LANDMARK_INDEX.mouth.outline
+				.map((index) => point(landmarks, index))
+				.filter((value): value is NormalizedFacePoint => Boolean(value)),
+		},
 		face: { left: faceLeft, right: faceRight, top: faceTop, bottom: faceBottom },
 	};
 }
@@ -288,6 +323,7 @@ function predictGeometry(
 		upper: transformPoint(eye.upper),
 		lower: transformPoint(eye.lower),
 		...(eye.iris ? { iris: transformPoint(eye.iris) } : {}),
+		...(eye.outline ? { outline: eye.outline.map(transformPoint) } : {}),
 	});
 
 	return {
@@ -300,6 +336,9 @@ function predictGeometry(
 			right: transformPoint(current.mouth.right),
 			upper: transformPoint(current.mouth.upper),
 			lower: transformPoint(current.mouth.lower),
+			...(current.mouth.outline
+				? { outline: current.mouth.outline.map(transformPoint) }
+				: {}),
 		},
 		face: {
 			left: transformPoint(current.face.left),

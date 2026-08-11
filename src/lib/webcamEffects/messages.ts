@@ -16,6 +16,7 @@ export interface CartoonFaceEyeGeometry {
 	upper: NormalizedFacePoint;
 	lower: NormalizedFacePoint;
 	iris?: NormalizedFacePoint;
+	outline?: NormalizedFacePoint[];
 }
 
 export interface CartoonFaceExpression {
@@ -36,6 +37,7 @@ export interface CartoonFaceGeometry {
 		right: NormalizedFacePoint;
 		upper: NormalizedFacePoint;
 		lower: NormalizedFacePoint;
+		outline?: NormalizedFacePoint[];
 	};
 	face: {
 		left: NormalizedFacePoint;

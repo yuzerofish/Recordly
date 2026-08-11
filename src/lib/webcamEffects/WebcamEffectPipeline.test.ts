@@ -169,6 +169,7 @@ function createHarness() {
 
 const source = { width: 640, height: 360 } as unknown as CanvasImageSource;
 const silhouette = { ...DEFAULT_WEBCAM_EFFECT_SETTINGS, type: "silhouette" as const };
+const monkey = { ...DEFAULT_WEBCAM_EFFECT_SETTINGS, type: "monkey" as const };
 const faceGeometry: CartoonFaceGeometry = {
 	timestampMs: 0,
 	imageLeftEye: {
@@ -213,6 +214,29 @@ describe("WebcamEffectPipeline", () => {
 		expect(harness.worker.messages).toHaveLength(0);
 		expect(harness.faceWorker.messages).toHaveLength(0);
 		expect(harness.createBitmap).not.toHaveBeenCalled();
+	});
+
+	it("runs the monkey effect from face tracking without person segmentation", async () => {
+		const harness = createHarness();
+		harness.faceWorker.face = faceGeometry;
+
+		const result = await harness.pipeline.processFrame({
+			source,
+			timestampMs: 120,
+			settings: monkey,
+			mode: "export",
+		});
+
+		expect(result).toMatchObject({ processed: true, source: harness.output });
+		expect(harness.worker.messages).toHaveLength(0);
+		expect(harness.createBitmap).toHaveBeenCalledTimes(1);
+		expect(harness.faceWorker.messages.some((message) => message.type === "track")).toBe(true);
+		expect(harness.compositor.compose).toHaveBeenCalledWith(
+			source,
+			expect.objectContaining({ width: 1, height: 1, timestampMs: 120 }),
+			monkey,
+			expect.objectContaining({ opacity: 1 }),
+		);
 	});
 
 	it("adds the cartoon face only while black silhouette mode is active", async () => {

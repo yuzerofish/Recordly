@@ -2847,7 +2847,7 @@ export class FrameRenderer {
 	private async prepareWebcamEffectFrame(targetTime: number): Promise<void> {
 		const webcam = this.config.webcam;
 		const effect = webcam?.effect;
-		if (!webcam?.enabled || effect?.type !== "silhouette") {
+		if (!webcam?.enabled || (effect?.type !== "silhouette" && effect?.type !== "monkey")) {
 			this.webcamEffectFrameSource = null;
 			return;
 		}
@@ -2870,6 +2870,7 @@ export class FrameRenderer {
 			timestampMs,
 			settings: effect,
 			mode: "export",
+			...(effect.type === "monkey" ? { presentationMirror: webcam.mirror } : {}),
 		});
 		if (!result.processed) {
 			this.webcamEffectFrameSource = null;
@@ -2892,7 +2893,8 @@ export class FrameRenderer {
 		}
 
 		const rawWebcamSource = this.webcamDecodedFrame ?? this.webcamVideoElement;
-		const requiresProcessedEffect = webcam.effect?.type === "silhouette";
+		const requiresProcessedEffect =
+			webcam.effect?.type === "silhouette" || webcam.effect?.type === "monkey";
 		const webcamSource = requiresProcessedEffect
 			? this.webcamEffectFrameSource
 			: (this.webcamEffectFrameSource ?? rawWebcamSource);

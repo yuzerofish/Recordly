@@ -4008,11 +4008,15 @@ export function SettingsPanel({
 									type="single"
 									value={webcam?.effect?.type ?? "none"}
 									onValueChange={(value) => {
-										if (value === "none" || value === "silhouette") {
+										if (
+											value === "none" ||
+											value === "silhouette" ||
+											value === "monkey"
+										) {
 											updateWebcamEffect({ type: value });
 										}
 									}}
-									className="grid grid-cols-2 gap-1"
+									className="grid grid-cols-3 gap-1"
 								>
 									<ToggleGroupItem
 										value="none"
@@ -4032,6 +4036,17 @@ export function SettingsPanel({
 											"effects.webcamPersonSilhouette",
 											"Black silhouette",
 										)}
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="monkey"
+										className="h-7 rounded-md border border-foreground/10 px-1.5 text-[10px] data-[state=on]:border-[#2563EB] data-[state=on]:bg-[#2563EB] data-[state=on]:text-white"
+									>
+										<img
+											src="webcam-effects/monkey-selfie-scene.png"
+											alt=""
+											className="mr-1 h-3.5 w-3.5 rounded-sm object-cover"
+										/>
+										{tSettings("effects.webcamPersonMonkey", "Monkey")}
 									</ToggleGroupItem>
 								</ToggleGroup>
 							</div>

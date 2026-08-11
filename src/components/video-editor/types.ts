@@ -126,7 +126,7 @@ export type WebcamPositionPreset =
 	| "bottom-center"
 	| "custom";
 
-export type WebcamEffectType = "none" | "silhouette";
+export type WebcamEffectType = "none" | "silhouette" | "monkey";
 export type WebcamEffectBackground = "transparent" | "original" | "blur";
 
 export interface WebcamEffectSettings {

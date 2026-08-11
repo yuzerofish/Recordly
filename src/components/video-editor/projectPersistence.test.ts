@@ -114,4 +114,15 @@ describe("normalizeProjectEditor", () => {
 			background: "transparent",
 		});
 	});
+
+	it("preserves the monkey webcam effect when reopening a project", () => {
+		const editor = normalizeProjectEditor({
+			webcam: {
+				...DEFAULT_WEBCAM_OVERLAY,
+				effect: { ...DEFAULT_WEBCAM_EFFECT_SETTINGS, type: "monkey" },
+			},
+		});
+
+		expect(editor.webcam.effect.type).toBe("monkey");
+	});
 });

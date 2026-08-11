@@ -1012,7 +1012,9 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 				typeof webcam.mirror === "boolean" ? webcam.mirror : DEFAULT_WEBCAM_OVERLAY.mirror,
 			effect: {
 				type:
-					webcamEffect.type === "silhouette" || webcamEffect.type === "none"
+					webcamEffect.type === "silhouette" ||
+					webcamEffect.type === "monkey" ||
+					webcamEffect.type === "none"
 						? webcamEffect.type
 						: DEFAULT_WEBCAM_EFFECT_SETTINGS.type,
 				silhouetteColor: WEBCAM_SILHOUETTE_COLOR,

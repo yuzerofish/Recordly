@@ -8,7 +8,7 @@ import {
 } from "@phosphor-icons/react";
 import type { ReactElement } from "react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
+import { type WebcamEffectType, WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
 import {
 	getWebcamEffectLayerVisibility,
@@ -51,11 +51,11 @@ export function WebcamPopover({
 	showWebcamControls: boolean;
 	setWebcamPreviewNode: (node: HTMLVideoElement | null) => void;
 	setWebcamPreviewCanvasNode: (node: HTMLCanvasElement | null) => void;
-	webcamEffectType: "none" | "silhouette";
+	webcamEffectType: WebcamEffectType;
 	webcamEffectRendered: boolean;
 	webcamEffectStatus: WebcamEffectPipelineStatus;
 	onRetryWebcamEffect: () => void;
-	onWebcamEffectTypeChange: (type: "none" | "silhouette") => void;
+	onWebcamEffectTypeChange: (type: WebcamEffectType) => void;
 	videoDevices: DeviceOption[];
 	webcamDeviceId?: string;
 	selectedVideoDeviceId?: string;
@@ -142,14 +142,14 @@ export function WebcamPopover({
 							}}
 							aria-hidden="true"
 						/>
-						{webcamEffectType === "silhouette" &&
+						{webcamEffectType !== "none" &&
 						webcamEffectStatus === "loading" &&
 						!webcamEffectRendered ? (
 							<div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 text-white">
 								<SpinnerGap className="h-5 w-5 animate-spin drop-shadow" />
 							</div>
 						) : null}
-						{webcamEffectType === "silhouette" && webcamEffectStatus === "fallback" ? (
+						{webcamEffectType !== "none" && webcamEffectStatus === "fallback" ? (
 							<button
 								type="button"
 								onClick={onRetryWebcamEffect}
@@ -164,11 +164,11 @@ export function WebcamPopover({
 						type="single"
 						value={webcamEffectType}
 						onValueChange={(value) => {
-							if (value === "none" || value === "silhouette") {
+							if (value === "none" || value === "silhouette" || value === "monkey") {
 								onWebcamEffectTypeChange(value);
 							}
 						}}
-						className="grid grid-cols-2 gap-1 rounded-md bg-[var(--launch-hover)] p-1"
+						className="grid grid-cols-3 gap-1 rounded-md bg-[var(--launch-hover)] p-1"
 					>
 						<ToggleGroupItem value="none" className="h-7 rounded text-[10px]">
 							{t("recording.personOriginal")}
@@ -179,6 +179,14 @@ export function WebcamPopover({
 								style={{ backgroundColor: WEBCAM_SILHOUETTE_COLOR }}
 							/>
 							{t("recording.personSilhouette")}
+						</ToggleGroupItem>
+						<ToggleGroupItem value="monkey" className="h-7 rounded px-1 text-[10px]">
+							<img
+								src="webcam-effects/monkey-selfie-scene.png"
+								alt=""
+								className="mr-1 h-3.5 w-3.5 rounded-sm object-cover"
+							/>
+							{t("recording.personMonkey", "Monkey")}
 						</ToggleGroupItem>
 					</ToggleGroup>
 				</div>

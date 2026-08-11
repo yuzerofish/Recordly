@@ -8,7 +8,7 @@ export function getWebcamEffectLayerVisibility({
 	status: WebcamEffectPipelineStatus;
 	hasSafeFrame: boolean;
 }): { rawOpacity: 0 | 1; processedOpacity: 0 | 1 } {
-	if (effectType === "silhouette") {
+	if (effectType === "silhouette" || effectType === "monkey") {
 		return { rawOpacity: 0, processedOpacity: 1 };
 	}
 	return { rawOpacity: 1, processedOpacity: 0 };

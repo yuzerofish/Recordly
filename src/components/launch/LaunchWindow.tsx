@@ -108,7 +108,7 @@ function LaunchWindowContent() {
 			window.removeEventListener("storage", syncPersistedWebcamEffect);
 		};
 	}, []);
-	const updateWebcamEffectType = (type: "none" | "silhouette") => {
+	const updateWebcamEffectType = (type: "none" | "silhouette" | "monkey") => {
 		const nextEffect = { ...webcamEffect, type };
 		setWebcamEffect(nextEffect);
 		const persistedWebcam = loadEditorPreferences().webcam ?? DEFAULT_EDITOR_PREFERENCES.webcam;
@@ -229,6 +229,15 @@ function LaunchWindowContent() {
 			isWebcamPreviewDraggingRef,
 			webcamPreviewDragStartRef,
 		});
+
+	useEffect(() => {
+		if (!recording) return;
+		if (openId) requestClose(openId);
+		const restorePassthrough = window.setTimeout(() => {
+			window.electronAPI?.hudOverlaySetIgnoreMouse?.(true);
+		}, 0);
+		return () => window.clearTimeout(restorePassthrough);
+	}, [openId, recording, requestClose]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -610,14 +619,14 @@ function LaunchWindowContent() {
 									}}
 									aria-hidden="true"
 								/>
-								{webcamEffect.type === "silhouette" &&
+								{webcamEffect.type !== "none" &&
 								webcamEffectStatus === "loading" &&
 								!webcamEffectRendered ? (
 									<div className="pointer-events-none absolute inset-0 flex items-center justify-center text-white">
 										<SpinnerGapIcon className="h-6 w-6 animate-spin drop-shadow" />
 									</div>
 								) : null}
-								{webcamEffect.type === "silhouette" &&
+								{webcamEffect.type !== "none" &&
 								webcamEffectStatus === "fallback" ? (
 									<div
 										className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/70 p-1.5 text-white"

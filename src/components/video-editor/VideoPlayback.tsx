@@ -2117,7 +2117,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				if (
 					!video ||
 					!canvas ||
-					settings?.type !== "silhouette" ||
+					(settings?.type !== "silhouette" && settings?.type !== "monkey") ||
 					video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
 					video.videoWidth <= 0 ||
 					video.videoHeight <= 0
@@ -2144,6 +2144,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					mode: "preview",
 					discontinuity,
 					realtime,
+					presentationMirror: webcamMirror,
 				});
 				setWebcamEffectStatus(result.status);
 				const frameAction = getSafeWebcamFrameAction({
@@ -2178,7 +2179,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				webcamEffectRenderedRef.current = true;
 				setWebcamEffectRendered(true);
 			},
-			[],
+			[webcamMirror],
 		);
 
 		const handleWebcamEffectSeeked = useCallback(() => {
@@ -2186,7 +2187,8 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		}, [renderWebcamEffectFrame]);
 
 		useEffect(() => {
-			const enabled = webcam?.effect?.type === "silhouette";
+			const enabled =
+				webcam?.effect?.type === "silhouette" || webcam?.effect?.type === "monkey";
 			if (!enabled || !webcamEnabled || !webcamVideoPath) {
 				webcamEffectPipelineRef.current?.dispose();
 				webcamEffectPipelineRef.current = null;
@@ -2222,7 +2224,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 		useEffect(() => {
 			if (
-				webcam?.effect?.type === "silhouette" &&
+				webcam?.effect?.type !== "none" &&
 				!webcamVideoRef.current?.seeking &&
 				!isPlayingRef.current
 			) {
@@ -3309,21 +3311,21 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 											/>
 										</div>
 									</div>
-									{webcam?.effect?.type === "silhouette" &&
+									{webcam?.effect?.type !== "none" &&
 									webcamEffectStatus === "loading" &&
 									!webcamEffectRendered ? (
 										<div
 											className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 text-white"
-											aria-label="Preparing black silhouette"
+											aria-label="Preparing webcam effect"
 										>
 											<SpinnerGap className="h-5 w-5 animate-spin drop-shadow" />
 										</div>
 									) : null}
-									{webcam?.effect?.type === "silhouette" &&
+									{webcam?.effect?.type !== "none" &&
 									webcamEffectStatus === "fallback" ? (
 										<div
 											className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/65 p-1 text-white"
-											title="Black silhouette is unavailable. The camera remains hidden; turn the effect off and on to retry."
+											title="The webcam effect is unavailable. The camera remains hidden; turn the effect off and on to retry."
 										>
 											<WarningCircle className="h-4 w-4" weight="fill" />
 										</div>

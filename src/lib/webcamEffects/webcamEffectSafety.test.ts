@@ -17,6 +17,18 @@ describe("webcam effect fail-closed presentation", () => {
 		}
 	});
 
+	it("never exposes the full raw webcam while the monkey effect is active", () => {
+		for (const status of ["loading", "ready", "fallback"] as const) {
+			expect(
+				getWebcamEffectLayerVisibility({
+					effectType: "monkey",
+					status,
+					hasSafeFrame: status === "ready",
+				}),
+			).toEqual({ rawOpacity: 0, processedOpacity: 1 });
+		}
+	});
+
 	it("uses the raw webcam only when the silhouette effect is disabled", () => {
 		expect(
 			getWebcamEffectLayerVisibility({

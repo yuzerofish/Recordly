@@ -207,7 +207,7 @@ function getHudOverlayBounds() {
 	});
 	return getHudOverlayWindowBounds(
 		workArea,
-		isHudOverlayMousePassthroughSupported() && !hudOverlayRecordingActive,
+		isHudOverlayMousePassthroughSupported(),
 		fallbackExpanded,
 	);
 }
@@ -501,13 +501,8 @@ export function createHudOverlayWindow(): BrowserWindow {
 	}
 
 	if (isHudOverlayMousePassthroughSupported()) {
-		if (hudOverlayRecordingActive) {
-			hudOverlayIgnoringMouse = false;
-			win.setIgnoreMouseEvents(false);
-		} else {
-			hudOverlayIgnoringMouse = true;
-			win.setIgnoreMouseEvents(true, { forward: true });
-		}
+		hudOverlayIgnoringMouse = true;
+		win.setIgnoreMouseEvents(true, { forward: true });
 	}
 
 	// On Windows 11+, focus changes (e.g. showing a native notification) can break
@@ -641,11 +636,6 @@ export function reassertHudOverlayMousePassthrough(): void {
 		return;
 	}
 
-	if (hudOverlayRecordingActive) {
-		hud.setIgnoreMouseEvents(false);
-		return;
-	}
-
 	// Toggle off then back on so the native WS_EX_TRANSPARENT flag is fully
 	// re-initialised rather than merely re-asserted in a potentially broken state.
 	hud.setIgnoreMouseEvents(false);
@@ -664,7 +654,9 @@ export function setHudOverlayRecordingActive(recording: boolean): void {
 	hudOverlayRecordingActive = Boolean(recording);
 	hudOverlayFallbackExpanded = false;
 	applyHudOverlayBounds();
-	setHudOverlayMousePassthrough(!hudOverlayRecordingActive);
+	// Keep transparent parts click-through while recording. The renderer
+	// temporarily disables passthrough when the pointer enters HUD controls.
+	setHudOverlayMousePassthrough(true);
 }
 
 export function createUpdateToastWindow(): BrowserWindow {

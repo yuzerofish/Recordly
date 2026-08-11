@@ -1573,6 +1573,9 @@ export class ModernVideoExporter {
 		if (this.config.webcam?.enabled && this.config.webcam.effect?.type === "silhouette") {
 			reasons.push("unsupported-webcam-silhouette-effect");
 		}
+		if (this.config.webcam?.enabled && this.config.webcam.effect?.type === "monkey") {
+			reasons.push("unsupported-webcam-monkey-effect");
+		}
 		if (this.hasUnsupportedNativeStaticLayoutWebcamShape()) {
 			reasons.push("unsupported-rectangular-webcam-overlay");
 		}

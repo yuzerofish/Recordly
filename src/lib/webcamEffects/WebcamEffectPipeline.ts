@@ -1,4 +1,4 @@
-import type { WebcamEffectSettings } from "@/components/video-editor/types";
+import type { WebcamEffectSettings, WebcamEffectType } from "@/components/video-editor/types";
 import { getWebcamEffectAssetUrls } from "./assets";
 import { type CartoonFacePresentation, CartoonFaceTracker } from "./cartoonFace";
 import type {
@@ -11,7 +11,10 @@ import type {
 	WebcamEffectInference,
 } from "./messages";
 import { PersonMaskTracker, personMaskContainsPerson } from "./personMask";
-import { SilhouetteCompositor } from "./silhouetteCompositor";
+import {
+	DefaultWebcamEffectCompositor,
+	type WebcamEffectCompositor,
+} from "./webcamEffectCompositor";
 
 type RenderCanvas = HTMLCanvasElement | OffscreenCanvas;
 type OwnedPreviewFrame = ImageBitmap | VideoFrame;
@@ -26,6 +29,8 @@ export interface WebcamEffectProcessRequest {
 	mode: WebcamEffectProcessMode;
 	discontinuity?: boolean;
 	realtime?: boolean;
+	/** True when the caller mirrors the completed canvas during presentation. */
+	presentationMirror?: boolean;
 }
 
 export interface WebcamEffectProcessResult {
@@ -55,6 +60,7 @@ interface PreparedDiscontinuousInference {
 interface DiscontinuousPreviewRequest {
 	source: CanvasImageSource;
 	timestampMs: number;
+	effectType: WebcamEffectType;
 	sequence: number;
 	superseded: boolean;
 	resolve: (value: PreparedDiscontinuousInference | null) => void;
@@ -78,7 +84,7 @@ export interface WebcamEffectPipelineOptions {
 	inferenceWidth?: number;
 	inferenceHeight?: number;
 	requestTimeoutMs?: number;
-	compositor?: Pick<SilhouetteCompositor, "compose" | "getCanvas">;
+	compositor?: WebcamEffectCompositor;
 }
 
 function defaultWorkerFactory(): Worker {
@@ -160,7 +166,7 @@ export class WebcamEffectPipeline {
 	private readonly inferenceWidth: number;
 	private readonly inferenceHeight: number;
 	private readonly requestTimeoutMs: number;
-	private readonly compositor: Pick<SilhouetteCompositor, "compose" | "getCanvas">;
+	private readonly compositor: WebcamEffectCompositor;
 	private worker: Worker | null = null;
 	private faceWorker: Worker | null = null;
 	private readonly retiredWorkers = new WeakSet<Worker>();
@@ -208,7 +214,7 @@ export class WebcamEffectPipeline {
 		this.inferenceWidth = Math.max(64, Math.round(options.inferenceWidth ?? 256));
 		this.inferenceHeight = Math.max(64, Math.round(options.inferenceHeight ?? 256));
 		this.requestTimeoutMs = Math.max(1_000, options.requestTimeoutMs ?? 30_000);
-		this.compositor = options.compositor ?? new SilhouetteCompositor();
+		this.compositor = options.compositor ?? new DefaultWebcamEffectCompositor();
 	}
 
 	private async ensureInitialized(): Promise<void> {
@@ -443,11 +449,15 @@ export class WebcamEffectPipeline {
 	private acceptInference(
 		inference: WebcamEffectInference,
 		discontinuity = false,
+		effectType: WebcamEffectType = "silhouette",
 	): WebcamEffectInference {
-		const personPresent = personMaskContainsPerson(inference.mask);
+		const personPresent = effectType === "monkey" || personMaskContainsPerson(inference.mask);
 		const acceptedInference = {
 			...inference,
-			mask: this.maskTracker.update(inference.mask, discontinuity),
+			mask:
+				effectType === "monkey"
+					? inference.mask
+					: this.maskTracker.update(inference.mask, discontinuity),
 		};
 		this.lastInference = acceptedInference;
 		this.lastTimestampMs = acceptedInference.mask.timestampMs;
@@ -464,8 +474,14 @@ export class WebcamEffectPipeline {
 		source: CanvasImageSource,
 		timestampMs: number,
 		discontinuity: boolean,
+		effectType: WebcamEffectType,
 	): Promise<WebcamEffectInference> {
-		const inference = this.requestInference(source, timestampMs, discontinuity).finally(() => {
+		const inference = this.requestInference(
+			source,
+			timestampMs,
+			discontinuity,
+			effectType,
+		).finally(() => {
 			if (this.previewInFlight === inference) this.previewInFlight = null;
 		});
 		this.previewInFlight = inference;
@@ -511,12 +527,14 @@ export class WebcamEffectPipeline {
 		source: CanvasImageSource,
 		timestampMs: number,
 		sequence: number,
+		effectType: WebcamEffectType,
 	): Promise<PreparedDiscontinuousInference | null> {
 		if (sequence !== this.latestPreviewDiscontinuitySequence) return Promise.resolve(null);
 		return new Promise((resolve, reject) => {
 			const request: DiscontinuousPreviewRequest = {
 				source,
 				timestampMs,
+				effectType,
 				sequence,
 				superseded: false,
 				resolve,
@@ -566,6 +584,7 @@ export class WebcamEffectPipeline {
 				request.source,
 				request.timestampMs,
 				true,
+				request.effectType,
 			);
 			if (
 				request.superseded ||
@@ -579,7 +598,7 @@ export class WebcamEffectPipeline {
 					"Person segmentation returned a mask for the wrong timestamp",
 				);
 			}
-			const acceptedInference = this.acceptInference(inference, true);
+			const acceptedInference = this.acceptInference(inference, true, request.effectType);
 			request.resolve({ inference: acceptedInference, face: this.lastFacePresentation });
 		} catch (error) {
 			if (
@@ -604,9 +623,11 @@ export class WebcamEffectPipeline {
 		source: CanvasImageSource,
 		timestampMs: number,
 		discontinuity: boolean,
+		effectType: WebcamEffectType,
 	): Promise<WebcamEffectInference> {
+		const needsSegmentation = effectType === "silhouette";
 		const [, faceAvailable] = await Promise.all([
-			this.ensureInitialized(),
+			needsSegmentation ? this.ensureInitialized() : Promise.resolve(),
 			this.ensureFaceInitialized(),
 		]);
 		if (!faceAvailable) {
@@ -625,8 +646,8 @@ export class WebcamEffectPipeline {
 			resizeQuality: "medium",
 		} as const;
 		const frame = await this.bitmapFactory(source as ImageBitmapSource, bitmapOptions);
-		let faceFrame: ImageBitmap | null = null;
-		if (faceAvailable) {
+		let faceFrame: ImageBitmap | null = frame;
+		if (faceAvailable && needsSegmentation) {
 			try {
 				// Clone the already frozen inference frame rather than sampling a live
 				// HTMLVideoElement twice across two awaits. Both workers therefore see
@@ -641,8 +662,8 @@ export class WebcamEffectPipeline {
 				);
 			}
 		}
-		if (this.disposed || !this.worker || !this.faceWorker) {
-			frame.close();
+		if (this.disposed || (needsSegmentation && !this.worker) || !this.faceWorker) {
+			if (needsSegmentation) frame.close();
 			faceFrame?.close();
 			throw new RequiredWebcamWorkerError(
 				this.disposed
@@ -650,15 +671,23 @@ export class WebcamEffectPipeline {
 					: (this.error ?? "A required webcam effect worker became unavailable"),
 			);
 		}
-		const requestId = this.nextRequestId++;
-		const maskPromise = new Promise<PersonMask>((resolve, reject) => {
-			const timeoutId = setTimeout(() => {
-				this.pending.delete(requestId);
-				reject(new RequiredWebcamWorkerError("Person segmentation timed out"));
-			}, this.requestTimeoutMs);
-			this.pending.set(requestId, { resolve, reject, timeoutId });
+		let maskPromise: Promise<PersonMask> = Promise.resolve({
+			data: new Float32Array([0]),
+			width: 1,
+			height: 1,
+			timestampMs,
 		});
-		this.post({ type: "segment", requestId, frame, timestampMs, discontinuity }, [frame]);
+		if (needsSegmentation) {
+			const requestId = this.nextRequestId++;
+			maskPromise = new Promise<PersonMask>((resolve, reject) => {
+				const timeoutId = setTimeout(() => {
+					this.pending.delete(requestId);
+					reject(new RequiredWebcamWorkerError("Person segmentation timed out"));
+				}, this.requestTimeoutMs);
+				this.pending.set(requestId, { resolve, reject, timeoutId });
+			});
+			this.post({ type: "segment", requestId, frame, timestampMs, discontinuity }, [frame]);
+		}
 
 		let facePromise: Promise<CartoonFaceGeometry | null> = Promise.resolve(null);
 		if (faceFrame && this.faceWorker) {
@@ -687,7 +716,7 @@ export class WebcamEffectPipeline {
 		if (faceResult.status === "rejected") throw faceResult.reason;
 		if (
 			this.status === "fallback" ||
-			!this.worker ||
+			(needsSegmentation && !this.worker) ||
 			this.faceAvailable === false ||
 			!this.faceWorker
 		) {
@@ -705,13 +734,13 @@ export class WebcamEffectPipeline {
 		request: WebcamEffectProcessRequest,
 		allowWorkerRecovery = true,
 	): Promise<WebcamEffectProcessResult> {
-		if (request.settings.type !== "silhouette") {
+		if (request.settings.type !== "silhouette" && request.settings.type !== "monkey") {
 			return { source: request.source, processed: false, status: this.status };
 		}
 		if (this.disposed) {
 			if (request.mode === "export") {
 				throw new Error(
-					"Black silhouette export failed: webcam effect pipeline is disposed",
+					`${request.settings.type === "silhouette" ? "Black silhouette" : "Monkey effect"} export failed: webcam effect pipeline is disposed`,
 				);
 			}
 			return this.safePreviewResult("fallback", "Webcam effect pipeline is disposed");
@@ -719,7 +748,7 @@ export class WebcamEffectPipeline {
 		if (this.status === "fallback" && this.workerRecoveryAttempted) {
 			if (request.mode === "export") {
 				throw new Error(
-					`Black silhouette export failed: ${
+					`${request.settings.type === "silhouette" ? "Black silhouette" : "Monkey effect"} export failed: ${
 						this.error ?? "required webcam effect workers are unavailable"
 					}`,
 				);
@@ -800,6 +829,9 @@ export class WebcamEffectPipeline {
 					return this.safePreviewResult("loading");
 				}
 			}
+			if (this.compositor.prepare) {
+				await this.compositor.prepare(request.settings);
+			}
 			let renderInference: WebcamEffectInference | null = null;
 			let renderFace: CartoonFacePresentation | null | undefined;
 			if (!sameTimestamp || discontinuity) {
@@ -812,6 +844,7 @@ export class WebcamEffectPipeline {
 							renderSource,
 							request.timestampMs,
 							discontinuitySequence,
+							request.settings.type,
 						);
 						if (!prepared) {
 							return this.safePreviewResult("loading");
@@ -823,11 +856,12 @@ export class WebcamEffectPipeline {
 							renderSource,
 							request.timestampMs,
 							false,
+							request.settings.type,
 						);
 						if (previewInferenceEpoch !== this.previewInferenceEpoch) {
 							return this.safePreviewResult("loading");
 						}
-						this.acceptInference(freshInference);
+						this.acceptInference(freshInference, false, request.settings.type);
 					}
 				} else {
 					this.acceptInference(
@@ -835,8 +869,10 @@ export class WebcamEffectPipeline {
 							request.source,
 							request.timestampMs,
 							discontinuity,
+							request.settings.type,
 						),
 						discontinuity,
+						request.settings.type,
 					);
 				}
 			}
@@ -854,12 +890,23 @@ export class WebcamEffectPipeline {
 			) {
 				return this.safePreviewResult("loading");
 			}
-			const canvas = this.compositor.compose(
-				renderSource,
-				inference.mask,
-				request.settings,
-				renderFace === undefined ? this.lastFacePresentation : renderFace,
-			);
+			const facePresentation =
+				renderFace === undefined ? this.lastFacePresentation : renderFace;
+			const canvas =
+				request.presentationMirror === undefined
+					? this.compositor.compose(
+							renderSource,
+							inference.mask,
+							request.settings,
+							facePresentation,
+						)
+					: this.compositor.compose(
+							renderSource,
+							inference.mask,
+							request.settings,
+							facePresentation,
+							request.presentationMirror,
+						);
 			return { source: canvas as CanvasImageSource, processed: true, status: this.status };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -892,7 +939,9 @@ export class WebcamEffectPipeline {
 				this.clearCachedInference();
 			}
 			if (request.mode === "export") {
-				throw new Error(`Black silhouette export failed: ${message}`);
+				throw new Error(
+					`${request.settings.type === "silhouette" ? "Black silhouette" : "Monkey effect"} export failed: ${message}`,
+				);
 			}
 			return this.safePreviewResult("fallback", message);
 		} finally {

@@ -304,7 +304,10 @@ export function useWebcamPreviewOverlay({
 	}, [attachPreviewStreamToNode, shouldStreamWebcamPreview, webcamDeviceId]);
 
 	useEffect(() => {
-		if (!shouldStreamWebcamPreview || webcamEffectType !== "silhouette") {
+		if (
+			!shouldStreamWebcamPreview ||
+			(webcamEffectType !== "silhouette" && webcamEffectType !== "monkey")
+		) {
 			webcamEffectPipelineRef.current?.dispose();
 			webcamEffectPipelineRef.current = null;
 			setWebcamEffectRendered(false);
@@ -389,6 +392,7 @@ export function useWebcamPreviewOverlay({
 						settings: effectSettings,
 						mode: "preview",
 						realtime: true,
+						presentationMirror: true,
 					});
 					if (cancelled) return;
 					setWebcamEffectStatus(result.status);
