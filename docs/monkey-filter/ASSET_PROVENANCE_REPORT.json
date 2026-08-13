@@ -1,0 +1,33 @@
+{
+	"asset": "public/webcam-effects/monkey-selfie-scene.png",
+	"role": "Production bitmap scene for the monkey webcam filter",
+	"source": "OpenAI ImageGen edit generated from the user-provided monkey photo and the first generated neutral monkey scene",
+	"generatedOn": "2026-08-10",
+	"sourceDimensions": {
+		"width": 1672,
+		"height": 941
+	},
+	"productionDimensions": {
+		"width": 1600,
+		"height": 900
+	},
+	"productionTransform": "Aspect-preserving resize to the canonical 16:9 canvas; no upscaling or crop",
+	"content": {
+		"monkeyCount": 1,
+		"bananaCount": 1,
+		"bananaFullyVisible": true,
+		"faceUnobstructed": true,
+		"uiResidue": false,
+		"textOrWatermark": false
+	},
+	"filterAnchors": {
+		"imageLeftEye": { "x": 800, "y": 459, "width": 136, "height": 98 },
+		"imageRightEye": { "x": 931, "y": 465, "width": 136, "height": 98 },
+		"mouth": { "x": 852, "y": 691, "width": 236, "height": 152 }
+	},
+	"liveFeatureTreatment": {
+		"eyes": "16x12 radial lens warp, enlarged almond mask, purple soft-light blend",
+		"mouth": "20-point lip outline crop, mild radial deformation, fuller lip mask, red soft-light blend"
+	},
+	"validation": "Visually inspected at native 1600x900 resolution. The full banana, hand, arm, head, ears, eyes, and smiling mouth remain inside the canvas."
+}

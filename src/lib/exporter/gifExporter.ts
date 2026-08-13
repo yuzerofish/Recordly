@@ -28,6 +28,8 @@ import type {
 const GIF_WORKER_URL = new URL("gif.js/dist/gif.worker.js", import.meta.url).toString();
 
 const PROGRESS_SAMPLE_WINDOW_MS = 1_000;
+const GIF_TRAILER_BYTE = 0x3b;
+const GIF_TRAILING_PADDING_SCAN_CHUNK_BYTES = 64 * 1024;
 
 interface GifExporterConfig {
 	videoUrl: string;
@@ -132,6 +134,35 @@ export function calculateOutputDimensions(
 
 export function getGifRepeat(loop: boolean): 0 | 1 {
 	return loop ? 0 : 1;
+}
+
+/**
+ * gif.js allocates fixed-size pages and can leave zero-filled bytes after the
+ * GIF trailer. Most decoders ignore them, but strict parsers report a corrupt
+ * block label. Remove only verified zero padding after the final trailer.
+ */
+export async function trimGifTrailingPadding(blob: Blob): Promise<Blob> {
+	let scanEnd = blob.size;
+
+	while (scanEnd > 0) {
+		const scanStart = Math.max(0, scanEnd - GIF_TRAILING_PADDING_SCAN_CHUNK_BYTES);
+		const bytes = new Uint8Array(await blob.slice(scanStart, scanEnd).arrayBuffer());
+
+		for (let index = bytes.length - 1; index >= 0; index--) {
+			if (bytes[index] === 0) continue;
+
+			const logicalSize = scanStart + index + 1;
+			if (bytes[index] !== GIF_TRAILER_BYTE || logicalSize === blob.size) {
+				return blob;
+			}
+
+			return blob.slice(0, logicalSize, blob.type || "image/gif");
+		}
+
+		scanEnd = scanStart;
+	}
+
+	return blob;
 }
 
 export function buildGifFrameRendererConfig(
@@ -316,9 +347,9 @@ export class GifExporter {
 			}
 
 			// Render the GIF
-			const blob = await new Promise<Blob>((resolve, _reject) => {
+			const blob = await new Promise<Blob>((resolve, reject) => {
 				this.gif!.on("finished", (blob: Blob) => {
-					resolve(blob);
+					void trimGifTrailingPadding(blob).then(resolve, reject);
 				});
 
 				// Track rendering progress

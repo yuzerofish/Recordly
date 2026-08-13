@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export function useLaunchWindowSystemState(
-	preparePermissions: (args: { startup?: boolean }) => Promise<unknown>,
-) {
+export function useLaunchWindowSystemState() {
 	const [recordingsDirectory, setRecordingsDirectory] = useState<string | null>(null);
 	const [hudOverlayMousePassthroughSupported, setHudOverlayMousePassthroughSupported] = useState<
 		boolean | null
@@ -64,10 +62,6 @@ export function useLaunchWindowSystemState(
 			cancelled = true;
 		};
 	}, []);
-
-	useEffect(() => {
-		void preparePermissions({ startup: true });
-	}, [preparePermissions]);
 
 	useEffect(() => {
 		let cancelled = false;

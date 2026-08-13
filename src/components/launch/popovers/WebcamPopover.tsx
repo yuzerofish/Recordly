@@ -1,14 +1,22 @@
 import {
+	ArrowClockwise,
 	Eye,
 	EyeSlash as EyeOff,
+	SpinnerGap,
 	VideoCamera as Video,
 	VideoCameraSlash as VideoOff,
 } from "@phosphor-icons/react";
+import type { ReactElement } from "react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { type WebcamEffectType, WEBCAM_SILHOUETTE_COLOR } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
-import { DropdownItem, HudPopover } from "./PopoverScaffold";
+import {
+	getWebcamEffectLayerVisibility,
+	type WebcamEffectPipelineStatus,
+} from "@/lib/webcamEffects";
 import { useLaunchPopoverCoordinator } from "./LaunchPopoverCoordinator";
 import type { DeviceOption } from "./launchPopoverTypes";
-import type { ReactElement } from "react";
+import { DropdownItem, HudPopover } from "./PopoverScaffold";
 
 const POPOVER_ID = "webcam";
 
@@ -22,6 +30,12 @@ export function WebcamPopover({
 	onToggleFloatingPreview,
 	showWebcamControls,
 	setWebcamPreviewNode,
+	setWebcamPreviewCanvasNode,
+	webcamEffectType,
+	webcamEffectRendered,
+	webcamEffectStatus,
+	onRetryWebcamEffect,
+	onWebcamEffectTypeChange,
 	videoDevices,
 	webcamDeviceId,
 	selectedVideoDeviceId,
@@ -36,6 +50,12 @@ export function WebcamPopover({
 	onToggleFloatingPreview: () => void;
 	showWebcamControls: boolean;
 	setWebcamPreviewNode: (node: HTMLVideoElement | null) => void;
+	setWebcamPreviewCanvasNode: (node: HTMLCanvasElement | null) => void;
+	webcamEffectType: WebcamEffectType;
+	webcamEffectRendered: boolean;
+	webcamEffectStatus: WebcamEffectPipelineStatus;
+	onRetryWebcamEffect: () => void;
+	onWebcamEffectTypeChange: (type: WebcamEffectType) => void;
 	videoDevices: DeviceOption[];
 	webcamDeviceId?: string;
 	selectedVideoDeviceId?: string;
@@ -44,6 +64,11 @@ export function WebcamPopover({
 	const t = useScopedT("launch");
 	const { isOpen, requestOpen, requestClose } = useLaunchPopoverCoordinator();
 	const open = isOpen(POPOVER_ID);
+	const webcamEffectLayerVisibility = getWebcamEffectLayerVisibility({
+		effectType: webcamEffectType,
+		status: webcamEffectStatus,
+		hasSafeFrame: webcamEffectRendered,
+	});
 
 	return (
 		<HudPopover
@@ -66,15 +91,20 @@ export function WebcamPopover({
 			</div>
 			{webcamEnabled && (
 				<>
-					<DropdownItem icon={<VideoOff size={16} />} onClick={() => {
-						onDisableWebcam();
-						requestClose(POPOVER_ID);
-					}}>
+					<DropdownItem
+						icon={<VideoOff size={16} />}
+						onClick={() => {
+							onDisableWebcam();
+							requestClose(POPOVER_ID);
+						}}
+					>
 						{t("recording.turnOffWebcam")}
 					</DropdownItem>
 					{canToggleFloatingPreview ? (
 						<DropdownItem
-							icon={showFloatingWebcamPreview ? <EyeOff size={16} /> : <Eye size={16} />}
+							icon={
+								showFloatingWebcamPreview ? <EyeOff size={16} /> : <Eye size={16} />
+							}
 							selected={showFloatingWebcamPreview}
 							onClick={onToggleFloatingPreview}
 						>
@@ -86,19 +116,79 @@ export function WebcamPopover({
 				</>
 			)}
 			{!webcamEnabled && (
-				<div className="px-3 py-2 text-xs text-[var(--launch-text-muted)]">{t("recording.selectWebcamToEnable")}</div>
+				<div className="px-3 py-2 text-xs text-[var(--launch-text-muted)]">
+					{t("recording.selectWebcamToEnable")}
+				</div>
 			)}
 			{showWebcamControls && (
-				<div className="flex justify-center px-3 py-2">
-					<div className="h-24 w-24 overflow-hidden rounded-2xl bg-[var(--launch-hover)] ring-1 ring-[var(--launch-border-strong)]">
+				<div className="flex flex-col gap-2 px-3 py-2">
+					<div className="relative mx-auto h-24 w-24 overflow-hidden rounded-2xl bg-[var(--launch-hover)] ring-1 ring-[var(--launch-border-strong)]">
 						<video
 							ref={setWebcamPreviewNode}
-							className="h-full w-full object-cover"
+							className="absolute inset-0 h-full w-full object-cover"
 							muted
 							playsInline
-							style={{ transform: "scaleX(-1)" }}
+							style={{
+								opacity: webcamEffectLayerVisibility.rawOpacity,
+								transform: "scaleX(-1)",
+							}}
 						/>
+						<canvas
+							ref={setWebcamPreviewCanvasNode}
+							className="absolute inset-0 h-full w-full object-cover"
+							style={{
+								opacity: webcamEffectLayerVisibility.processedOpacity,
+								transform: "scaleX(-1)",
+							}}
+							aria-hidden="true"
+						/>
+						{webcamEffectType !== "none" &&
+						webcamEffectStatus === "loading" &&
+						!webcamEffectRendered ? (
+							<div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 text-white">
+								<SpinnerGap className="h-5 w-5 animate-spin drop-shadow" />
+							</div>
+						) : null}
+						{webcamEffectType !== "none" && webcamEffectStatus === "fallback" ? (
+							<button
+								type="button"
+								onClick={onRetryWebcamEffect}
+								className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white transition-colors hover:bg-black/85"
+								title={t("recording.personSilhouetteRetry")}
+							>
+								<ArrowClockwise className="h-4 w-4" />
+							</button>
+						) : null}
 					</div>
+					<ToggleGroup
+						type="single"
+						value={webcamEffectType}
+						onValueChange={(value) => {
+							if (value === "none" || value === "silhouette" || value === "monkey") {
+								onWebcamEffectTypeChange(value);
+							}
+						}}
+						className="grid grid-cols-3 gap-1 rounded-md bg-[var(--launch-hover)] p-1"
+					>
+						<ToggleGroupItem value="none" className="h-7 rounded text-[10px]">
+							{t("recording.personOriginal")}
+						</ToggleGroupItem>
+						<ToggleGroupItem value="silhouette" className="h-7 rounded text-[10px]">
+							<span
+								className="mr-1 h-2.5 w-2.5 rounded-full"
+								style={{ backgroundColor: WEBCAM_SILHOUETTE_COLOR }}
+							/>
+							{t("recording.personSilhouette")}
+						</ToggleGroupItem>
+						<ToggleGroupItem value="monkey" className="h-7 rounded px-1 text-[10px]">
+							<img
+								src="webcam-effects/monkey-selfie-scene.png"
+								alt=""
+								className="mr-1 h-3.5 w-3.5 rounded-sm object-cover"
+							/>
+							{t("recording.personMonkey", "Monkey")}
+						</ToggleGroupItem>
+					</ToggleGroup>
 				</div>
 			)}
 			{videoDevices.map((device) => (
@@ -106,7 +196,8 @@ export function WebcamPopover({
 					key={device.deviceId}
 					icon={
 						webcamEnabled &&
-						(webcamDeviceId === device.deviceId || selectedVideoDeviceId === device.deviceId) ? (
+						(webcamDeviceId === device.deviceId ||
+							selectedVideoDeviceId === device.deviceId) ? (
 							<Video size={16} />
 						) : (
 							<VideoOff size={16} />
@@ -114,7 +205,8 @@ export function WebcamPopover({
 					}
 					selected={
 						webcamEnabled &&
-						(webcamDeviceId === device.deviceId || selectedVideoDeviceId === device.deviceId)
+						(webcamDeviceId === device.deviceId ||
+							selectedVideoDeviceId === device.deviceId)
 					}
 					onClick={() => onSelectVideoDevice(device.deviceId)}
 				>
@@ -122,7 +214,9 @@ export function WebcamPopover({
 				</DropdownItem>
 			))}
 			{videoDevices.length === 0 && (
-				<div className="text-center text-xs text-[var(--launch-text-muted)] py-4">{t("recording.noWebcamsFound")}</div>
+				<div className="text-center text-xs text-[var(--launch-text-muted)] py-4">
+					{t("recording.noWebcamsFound")}
+				</div>
 			)}
 		</HudPopover>
 	);

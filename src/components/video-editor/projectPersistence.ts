@@ -52,6 +52,7 @@ import {
 	DEFAULT_PADDING,
 	DEFAULT_PLAYBACK_SPEED,
 	DEFAULT_WEBCAM_CORNER_RADIUS,
+	DEFAULT_WEBCAM_EFFECT_SETTINGS,
 	DEFAULT_WEBCAM_MARGIN,
 	DEFAULT_WEBCAM_OVERLAY,
 	DEFAULT_WEBCAM_POSITION_PRESET,
@@ -74,6 +75,10 @@ import {
 	type Padding,
 	type SpeedRegion,
 	type TrimRegion,
+	WEBCAM_SILHOUETTE_BACKGROUND,
+	WEBCAM_SILHOUETTE_COLOR,
+	WEBCAM_SILHOUETTE_OPACITY,
+	type WebcamEffectSettings,
 	type WebcamOverlaySettings,
 	type ZoomMotionBlurTuning,
 	type ZoomRegion,
@@ -823,6 +828,8 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 
 	const webcam: Partial<WebcamOverlaySettings> =
 		editor.webcam && typeof editor.webcam === "object" ? editor.webcam : {};
+	const webcamEffect: Partial<WebcamEffectSettings> =
+		webcam.effect && typeof webcam.effect === "object" ? webcam.effect : {};
 	const webcamSourcePath = typeof webcam.sourcePath === "string" ? webcam.sourcePath : null;
 	const legacyZoomScaleEffect = isFiniteNumber(
 		(webcam as Partial<{ zoomScaleEffect: number }>).zoomScaleEffect,
@@ -1003,6 +1010,20 @@ export function normalizeProjectEditor(editor: Partial<ProjectEditorState>): Pro
 			sourcePath: webcamSourcePath,
 			mirror:
 				typeof webcam.mirror === "boolean" ? webcam.mirror : DEFAULT_WEBCAM_OVERLAY.mirror,
+			effect: {
+				type:
+					webcamEffect.type === "silhouette" ||
+					webcamEffect.type === "monkey" ||
+					webcamEffect.type === "none"
+						? webcamEffect.type
+						: DEFAULT_WEBCAM_EFFECT_SETTINGS.type,
+				silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+				opacity: WEBCAM_SILHOUETTE_OPACITY,
+				feather: isFiniteNumber(webcamEffect.feather)
+					? clamp(webcamEffect.feather, 0, 20)
+					: DEFAULT_WEBCAM_EFFECT_SETTINGS.feather,
+				background: WEBCAM_SILHOUETTE_BACKGROUND,
+			},
 			cropRegion: normalizeWebcamCropRegion(webcam.cropRegion),
 			positionPreset:
 				webcam.positionPreset === "top-left" ||

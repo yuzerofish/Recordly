@@ -10,7 +10,11 @@ import {
 	saveEditorPreferences,
 	saveEditorPresets,
 } from "./editorPreferences";
-import { DEFAULT_AUTO_CAPTION_SETTINGS, DEFAULT_CROP_REGION } from "./types";
+import {
+	DEFAULT_AUTO_CAPTION_SETTINGS,
+	DEFAULT_CROP_REGION,
+	WEBCAM_SILHOUETTE_COLOR,
+} from "./types";
 
 function createStorageMock(initialValues: Record<string, string> = {}): Storage {
 	const store = new Map(Object.entries(initialValues));
@@ -61,17 +65,25 @@ describe("editorPreferences", () => {
 	});
 
 	it("normalizes invalid values back to safe defaults", () => {
-		expect(
-			normalizeEditorPreferences({
-				wallpaper: 123,
-				showCursor: "yes",
-				cropRegion: { x: 2, width: -1 },
-				aspectRatio: "bad-value",
-				customAspectWidth: "0",
-				customAspectHeight: "",
-				customWallpapers: "not-an-array",
-			}),
-		).toMatchObject({
+		const normalized = normalizeEditorPreferences({
+			wallpaper: 123,
+			showCursor: "yes",
+			cropRegion: { x: 2, width: -1 },
+			webcam: {
+				effect: {
+					type: "invalid",
+					silhouetteColor: "black",
+					opacity: 5,
+					feather: Number.NaN,
+					background: "invalid",
+				},
+			},
+			aspectRatio: "bad-value",
+			customAspectWidth: "0",
+			customAspectHeight: "",
+			customWallpapers: "not-an-array",
+		});
+		expect(normalized).toMatchObject({
 			wallpaper: DEFAULT_EDITOR_PREFERENCES.wallpaper,
 			showCursor: DEFAULT_EDITOR_PREFERENCES.showCursor,
 			aspectRatio: DEFAULT_EDITOR_PREFERENCES.aspectRatio,
@@ -80,6 +92,30 @@ describe("editorPreferences", () => {
 			customAspectWidth: DEFAULT_EDITOR_PREFERENCES.customAspectWidth,
 			customAspectHeight: DEFAULT_EDITOR_PREFERENCES.customAspectHeight,
 			customWallpapers: DEFAULT_EDITOR_PREFERENCES.customWallpapers,
+		});
+		expect(normalized.webcam.effect).toEqual(DEFAULT_EDITOR_PREFERENCES.webcam.effect);
+	});
+
+	it("persists webcam silhouette mode while freezing appearance fields", () => {
+		const localStorage = createStorageMock();
+		vi.stubGlobal("localStorage", localStorage);
+		const effect = {
+			type: "silhouette" as const,
+			silhouetteColor: "#050505",
+			opacity: 0.75,
+			feather: 8,
+			background: "transparent" as const,
+		};
+
+		saveEditorPreferences({
+			webcam: { ...DEFAULT_EDITOR_PREFERENCES.webcam, effect },
+		});
+
+		expect(loadEditorPreferences().webcam.effect).toEqual({
+			...effect,
+			silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+			opacity: 1,
+			background: "transparent",
 		});
 	});
 

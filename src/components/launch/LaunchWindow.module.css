@@ -95,8 +95,6 @@
 	color: #4eeeb0;
 }
 
-
-
 .menuCard {
 	width: 300px;
 	max-height: 400px;
@@ -278,7 +276,15 @@
 	cursor: grabbing;
 }
 
+.recordingWebcamPreviewTransparent {
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+}
+
 .recordingWebcamPreviewVideo {
+	position: absolute;
+	inset: 0;
 	display: block;
 	height: 100%;
 	width: 100%;

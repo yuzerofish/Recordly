@@ -77,6 +77,7 @@ import {
 	initializePixiApplicationWithTimeout,
 } from "@/lib/pixiApplicationLifecycle";
 import { isVideoWallpaperSource } from "@/lib/wallpapers";
+import { WebcamEffectPipeline } from "@/lib/webcamEffects";
 import { renderAnnotations } from "./annotationRenderer";
 import { renderCaptions } from "./captionRenderer";
 import { ForwardFrameSource } from "./forwardFrameSource";
@@ -283,6 +284,8 @@ export class FrameRenderer {
 	private webcamFrameCacheCtx: CanvasRenderingContext2D | null = null;
 	private webcamBubbleCanvas: HTMLCanvasElement | null = null;
 	private webcamBubbleCtx: CanvasRenderingContext2D | null = null;
+	private webcamEffectPipeline: WebcamEffectPipeline | null = null;
+	private webcamEffectFrameSource: CanvasImageSource | null = null;
 	private lastSyncedWebcamTime: number | null = null;
 	private cleanupWebcamSource: (() => void) | null = null;
 	private frameImage: HTMLImageElement | null = null;
@@ -1414,6 +1417,46 @@ export class FrameRenderer {
 		}
 	}
 
+	private async prepareWebcamEffectFrame(targetTime: number): Promise<void> {
+		const webcam = this.config.webcam;
+		const effect = webcam?.effect;
+		if (!webcam?.enabled || (effect?.type !== "silhouette" && effect?.type !== "monkey")) {
+			this.webcamEffectFrameSource = null;
+			return;
+		}
+
+		const source = this.webcamDecodedFrame ?? this.webcamVideoElement;
+		if (!source) {
+			this.webcamEffectFrameSource = null;
+			throw new Error("Black silhouette export failed: webcam frame is unavailable");
+		}
+		const sourceWidth =
+			this.webcamDecodedFrame?.displayWidth ?? this.webcamVideoElement?.videoWidth ?? 0;
+		const sourceHeight =
+			this.webcamDecodedFrame?.displayHeight ?? this.webcamVideoElement?.videoHeight ?? 0;
+		if (sourceWidth <= 0 || sourceHeight <= 0) {
+			this.webcamEffectFrameSource = null;
+			throw new Error("Black silhouette export failed: webcam frame has no dimensions");
+		}
+
+		this.webcamEffectPipeline ??= new WebcamEffectPipeline();
+		const timestampMs = Math.max(0, (this.lastSyncedWebcamTime ?? targetTime) * 1000);
+		const result = await this.webcamEffectPipeline.processFrame({
+			source,
+			timestampMs,
+			settings: effect,
+			mode: "export",
+			...(effect.type === "monkey" ? { presentationMirror: webcam.mirror } : {}),
+		});
+		if (!result.processed) {
+			this.webcamEffectFrameSource = null;
+			throw new Error(
+				`Black silhouette export failed: ${result.error ?? `effect status is ${result.status}`}`,
+			);
+		}
+		this.webcamEffectFrameSource = result.source;
+	}
+
 	private async setupFrame(): Promise<void> {
 		const frameId = this.config.frame;
 		if (!frameId) return;
@@ -1618,6 +1661,7 @@ export class FrameRenderer {
 			const targetTime = Math.max(0, this.currentVideoTime);
 			await this.syncWebcamFrame(targetTime);
 		}
+		await this.prepareWebcamEffectFrame(Math.max(0, this.currentVideoTime));
 
 		// Sync video wallpaper frame
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
@@ -2075,8 +2119,10 @@ export class FrameRenderer {
 		this.currentVideoTime = timestamp / 1_000_000;
 
 		if (this.webcamForwardFrameSource || this.webcamVideoElement) {
-			await this.syncWebcamFrame(Math.max(0, this.currentVideoTime));
+			const targetTime = Math.max(0, this.currentVideoTime);
+			await this.syncWebcamFrame(targetTime);
 		}
+		await this.prepareWebcamEffectFrame(Math.max(0, this.currentVideoTime));
 
 		if (this.backgroundForwardFrameSource || this.backgroundVideoElement) {
 			await this.syncBackgroundFrame(Math.max(0, backgroundTimelineTimestamp / 1_000_000));
@@ -2341,6 +2387,11 @@ export class FrameRenderer {
 		if (!webcam?.enabled || (!webcamDecodedFrame && !webcamVideo)) {
 			return;
 		}
+		const requiresProcessedEffect =
+			webcam.effect?.type === "silhouette" || webcam.effect?.type === "monkey";
+		if (requiresProcessedEffect && !this.webcamEffectFrameSource) {
+			return;
+		}
 
 		const hasCachedWebcamFrame = Boolean(
 			this.webcamFrameCacheCanvas &&
@@ -2375,6 +2426,7 @@ export class FrameRenderer {
 		});
 
 		const canRefreshCache =
+			!requiresProcessedEffect &&
 			hasLiveWebcamFrame &&
 			this.lastSyncedWebcamTime !== null &&
 			Math.abs(this.lastSyncedWebcamTime - expectedWebcamTargetTime) <= 0.02 &&
@@ -2420,25 +2472,33 @@ export class FrameRenderer {
 			);
 		}
 
-		const webcamFrameSource =
-			this.webcamFrameCacheCanvas ??
-			(hasLiveWebcamFrame ? (webcamDecodedFrame ?? webcamVideo) : null);
+		const webcamFrameSource = requiresProcessedEffect
+			? this.webcamEffectFrameSource
+			: (this.webcamEffectFrameSource ??
+				this.webcamFrameCacheCanvas ??
+				(hasLiveWebcamFrame ? (webcamDecodedFrame ?? webcamVideo) : null));
 		if (!webcamFrameSource) {
 			return;
 		}
 
+		const sourceDimensions = webcamFrameSource as unknown as {
+			displayWidth?: number;
+			displayHeight?: number;
+			videoWidth?: number;
+			videoHeight?: number;
+			width?: number;
+			height?: number;
+		};
 		const sourceWidth =
-			("displayWidth" in webcamFrameSource
-				? webcamFrameSource.displayWidth
-				: "videoWidth" in webcamFrameSource
-					? webcamFrameSource.videoWidth
-					: webcamFrameSource.width) || 1;
+			sourceDimensions.displayWidth ??
+			sourceDimensions.videoWidth ??
+			sourceDimensions.width ??
+			1;
 		const sourceHeight =
-			("displayHeight" in webcamFrameSource
-				? webcamFrameSource.displayHeight
-				: "videoHeight" in webcamFrameSource
-					? webcamFrameSource.videoHeight
-					: webcamFrameSource.height) || sourceWidth;
+			sourceDimensions.displayHeight ??
+			sourceDimensions.videoHeight ??
+			sourceDimensions.height ??
+			sourceWidth;
 		const margin = webcam.margin ?? 24;
 		const widthPercent = webcam.width ?? webcam.size ?? 50;
 		const heightPercent = getCropMatchedWebcamHeightPercent(
@@ -2529,7 +2589,9 @@ export class FrameRenderer {
 		}
 		bubbleCtx.restore();
 
-		if ((webcam.shadow ?? 0) > 0) {
+		const hasTransparentSilhouette =
+			webcam.effect?.type === "silhouette" && webcam.effect.background === "transparent";
+		if (!hasTransparentSilhouette && (webcam.shadow ?? 0) > 0) {
 			const shadow = Math.max(0, Math.min(1, webcam.shadow));
 			const shadowSize = Math.min(dimensions.width, dimensions.height);
 			ctx.save();
@@ -2620,6 +2682,9 @@ export class FrameRenderer {
 		this.webcamFrameCacheCtx = null;
 		this.webcamBubbleCanvas = null;
 		this.webcamBubbleCtx = null;
+		this.webcamEffectPipeline?.dispose();
+		this.webcamEffectPipeline = null;
+		this.webcamEffectFrameSource = null;
 		this.lastSyncedWebcamTime = null;
 		this.frameImage = null;
 		this.frameInsets = null;

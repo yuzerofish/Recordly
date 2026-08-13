@@ -126,11 +126,23 @@ export type WebcamPositionPreset =
 	| "bottom-center"
 	| "custom";
 
+export type WebcamEffectType = "none" | "silhouette" | "monkey";
+export type WebcamEffectBackground = "transparent" | "original" | "blur";
+
+export interface WebcamEffectSettings {
+	type: WebcamEffectType;
+	silhouetteColor: string;
+	opacity: number;
+	feather: number;
+	background: WebcamEffectBackground;
+}
+
 export interface WebcamOverlaySettings {
 	enabled: boolean;
 	sourcePath: string | null;
 	timeOffsetMs: number;
 	mirror: boolean;
+	effect: WebcamEffectSettings;
 	cropRegion: CropRegion;
 	corner: WebcamCorner;
 	positionPreset: WebcamPositionPreset;
@@ -190,11 +202,27 @@ export const DEFAULT_WEBCAM_POSITION_X = 1;
 export const DEFAULT_WEBCAM_POSITION_Y = 1;
 export const DEFAULT_WEBCAM_TIME_OFFSET_MS = 0;
 
+// Keep the saved fields for project compatibility, but the built-in effect is a
+// frozen pure-black person layer on transparency. Legacy intensity/background
+// values must never reveal camera pixels while silhouette mode is active.
+export const WEBCAM_SILHOUETTE_COLOR = "#000000";
+export const WEBCAM_SILHOUETTE_OPACITY = 1;
+export const WEBCAM_SILHOUETTE_BACKGROUND = "transparent" as const;
+
+export const DEFAULT_WEBCAM_EFFECT_SETTINGS: WebcamEffectSettings = {
+	type: "none",
+	silhouetteColor: WEBCAM_SILHOUETTE_COLOR,
+	opacity: WEBCAM_SILHOUETTE_OPACITY,
+	feather: 6,
+	background: WEBCAM_SILHOUETTE_BACKGROUND,
+};
+
 export const DEFAULT_WEBCAM_OVERLAY: WebcamOverlaySettings = {
 	enabled: false,
 	sourcePath: null,
 	timeOffsetMs: DEFAULT_WEBCAM_TIME_OFFSET_MS,
 	mirror: true,
+	effect: { ...DEFAULT_WEBCAM_EFFECT_SETTINGS },
 	cropRegion: { x: 0, y: 0, width: 1, height: 1 },
 	corner: "bottom-right",
 	positionPreset: DEFAULT_WEBCAM_POSITION_PRESET,

@@ -91,6 +91,7 @@ import {
 	DEFAULT_CURSOR_SWAY,
 	DEFAULT_PADDING,
 	DEFAULT_WEBCAM_CORNER_RADIUS,
+	DEFAULT_WEBCAM_EFFECT_SETTINGS,
 	DEFAULT_WEBCAM_MARGIN,
 	DEFAULT_WEBCAM_POSITION_PRESET,
 	DEFAULT_WEBCAM_POSITION_X,
@@ -101,6 +102,7 @@ import {
 	DEFAULT_ZOOM_IN_DURATION_MS,
 	DEFAULT_ZOOM_MOTION_BLUR_TUNING,
 	DEFAULT_ZOOM_OUT_DURATION_MS,
+	WEBCAM_SILHOUETTE_COLOR,
 } from "./types";
 import { fromCursorSwaySliderValue, toCursorSwaySliderValue } from "./videoPlayback/cursorSway";
 import { isZeroPadding } from "./videoPlayback/layoutUtils";
@@ -1929,7 +1931,10 @@ export function SettingsPanel({
 
 	const resetWebcamSection = () => {
 		if (!onWebcamChange) return;
-		onWebcamChange({ ...defaultWebcam });
+		onWebcamChange({
+			...defaultWebcam,
+			effect: { ...defaultWebcam.effect },
+		});
 	};
 
 	const resetCropSection = () => {
@@ -1939,6 +1944,21 @@ export function SettingsPanel({
 	const updateWebcam = (patch: Partial<WebcamOverlaySettings>) => {
 		if (!webcam || !onWebcamChange) return;
 		onWebcamChange({ ...webcam, ...patch });
+	};
+
+	const updateWebcamEffect = (patch: Partial<WebcamOverlaySettings["effect"]>) => {
+		if (!webcam || !onWebcamChange) return;
+		onWebcamChange({
+			...webcam,
+			effect: {
+				...DEFAULT_WEBCAM_EFFECT_SETTINGS,
+				...webcam.effect,
+				...patch,
+				silhouetteColor: DEFAULT_WEBCAM_EFFECT_SETTINGS.silhouetteColor,
+				opacity: DEFAULT_WEBCAM_EFFECT_SETTINGS.opacity,
+				background: DEFAULT_WEBCAM_EFFECT_SETTINGS.background,
+			},
+		});
 	};
 
 	const applyWebcamPositionPreset = (preset: WebcamPositionPreset) => {
@@ -3966,6 +3986,89 @@ export function SettingsPanel({
 									className="data-[state=checked]:bg-[#2563EB] scale-75"
 								/>
 							</div>
+							<div className="rounded-lg bg-foreground/[0.03] px-2.5 py-2">
+								<div className="mb-2 flex items-center justify-between gap-2">
+									<span className="text-[10px] text-muted-foreground">
+										{tSettings("effects.webcamPersonStyle", "Person style")}
+									</span>
+									<button
+										type="button"
+										onClick={() =>
+											updateWebcamEffect({
+												...DEFAULT_WEBCAM_EFFECT_SETTINGS,
+												type: webcam?.effect?.type ?? "none",
+											})
+										}
+										className="text-[10px] text-[#2563EB] transition-opacity hover:opacity-80"
+									>
+										{t("common.actions.reset", "Reset")}
+									</button>
+								</div>
+								<ToggleGroup
+									type="single"
+									value={webcam?.effect?.type ?? "none"}
+									onValueChange={(value) => {
+										if (
+											value === "none" ||
+											value === "silhouette" ||
+											value === "monkey"
+										) {
+											updateWebcamEffect({ type: value });
+										}
+									}}
+									className="grid grid-cols-3 gap-1"
+								>
+									<ToggleGroupItem
+										value="none"
+										className="h-7 rounded-md border border-foreground/10 px-2 text-[10px] data-[state=on]:border-[#2563EB] data-[state=on]:bg-[#2563EB] data-[state=on]:text-white"
+									>
+										{tSettings("effects.webcamPersonOriginal", "Original")}
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="silhouette"
+										className="h-7 rounded-md border border-foreground/10 px-2 text-[10px] data-[state=on]:border-[#2563EB] data-[state=on]:bg-[#2563EB] data-[state=on]:text-white"
+									>
+										<span
+											className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full border border-white/20"
+											style={{ backgroundColor: WEBCAM_SILHOUETTE_COLOR }}
+										/>
+										{tSettings(
+											"effects.webcamPersonSilhouette",
+											"Black silhouette",
+										)}
+									</ToggleGroupItem>
+									<ToggleGroupItem
+										value="monkey"
+										className="h-7 rounded-md border border-foreground/10 px-1.5 text-[10px] data-[state=on]:border-[#2563EB] data-[state=on]:bg-[#2563EB] data-[state=on]:text-white"
+									>
+										<img
+											src="webcam-effects/monkey-selfie-scene.png"
+											alt=""
+											className="mr-1 h-3.5 w-3.5 rounded-sm object-cover"
+										/>
+										{tSettings("effects.webcamPersonMonkey", "Monkey")}
+									</ToggleGroupItem>
+								</ToggleGroup>
+							</div>
+							{webcam?.effect?.type === "silhouette" ? (
+								<SliderControl
+									label={tSettings(
+										"effects.webcamSilhouetteEdge",
+										"Edge softness",
+									)}
+									value={
+										webcam.effect.feather ??
+										DEFAULT_WEBCAM_EFFECT_SETTINGS.feather
+									}
+									defaultValue={DEFAULT_WEBCAM_EFFECT_SETTINGS.feather}
+									min={0}
+									max={20}
+									step={1}
+									onChange={(feather) => updateWebcamEffect({ feather })}
+									formatValue={(value) => `${Math.round(value)}px`}
+									parseInput={(text) => parseFloat(text.replace(/px$/, ""))}
+								/>
+							) : null}
 							<SliderControl
 								label={tSettings("effects.webcamWidth", "Webcam Width")}
 								value={webcamWidth}

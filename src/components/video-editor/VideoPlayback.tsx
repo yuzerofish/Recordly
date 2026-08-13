@@ -1,3 +1,4 @@
+import { SpinnerGap, WarningCircle } from "@phosphor-icons/react";
 import { Application, Container, Graphics, Rectangle, Sprite, Texture, VideoSource } from "pixi.js";
 import { MotionBlurFilter } from "pixi-filters/motion-blur";
 import { ZoomBlurFilter } from "pixi-filters/zoom-blur";
@@ -26,6 +27,12 @@ import {
 	DEFAULT_WALLPAPER_RELATIVE_PATH,
 	isVideoWallpaperSource,
 } from "@/lib/wallpapers";
+import {
+	getSafeWebcamFrameAction,
+	getWebcamEffectLayerVisibility,
+	WebcamEffectPipeline,
+	type WebcamEffectPipelineStatus,
+} from "@/lib/webcamEffects";
 import { type CaptionEditTarget, normalizeCaptionEditText } from "./captionEditing";
 import { buildActiveCaptionLayout } from "./captionLayout";
 import {
@@ -68,6 +75,7 @@ import {
 	type SpringState,
 	stepSpringValue,
 } from "./videoPlayback/motionSmoothing";
+import { renderPausedPreviewFrame, syncPreviewTickerState } from "./videoPlayback/previewTicker";
 
 function getContributedCursorStylesSignature() {
 	return extensionHost
@@ -171,11 +179,10 @@ import {
 	SNAP_TO_EDGES_RATIO_AUTO,
 } from "./videoPlayback/cursorFollowCamera";
 import { clampFocusToStage as clampFocusToStageUtil } from "./videoPlayback/focusUtils";
-import {
-	layoutVideoContent as layoutVideoContentUtil,
-} from "./videoPlayback/layoutUtils";
+import { layoutVideoContent as layoutVideoContentUtil } from "./videoPlayback/layoutUtils";
 import { updateOverlayIndicator } from "./videoPlayback/overlayUtils";
 import { createVideoEventHandlers } from "./videoPlayback/videoEventHandlers";
+import { createWebcamEffectFrameLoop } from "./videoPlayback/webcamEffectFrameLoop";
 import { getWebcamMediaTargetTimeSeconds, shouldSeekWebcamMedia } from "./videoPlayback/webcamSync";
 import { findDominantRegion } from "./videoPlayback/zoomRegionUtils";
 import {
@@ -490,6 +497,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const motionBlurFilterRef = useRef<MotionBlurFilter | null>(null);
 		const cameraContainerRef = useRef<Container | null>(null);
 		const timeUpdateAnimationRef = useRef<number | null>(null);
+		const pausedPreviewRenderRafRef = useRef<number | null>(null);
 		const [pixiReady, setPixiReady] = useState(false);
 		const [videoReady, setVideoReady] = useState(false);
 		const [pixiRendererError, setPixiRendererError] = useState<string | null>(null);
@@ -532,12 +540,32 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const overlayRef = useRef<HTMLDivElement | null>(null);
 		const focusIndicatorRef = useRef<HTMLDivElement | null>(null);
 		const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
+		const webcamEffectCanvasRef = useRef<HTMLCanvasElement | null>(null);
+		const webcamEffectBackBufferRef = useRef<HTMLCanvasElement | null>(null);
+		const webcamEffectRenderedRef = useRef(false);
+		const webcamEffectPipelineRef = useRef<WebcamEffectPipeline | null>(null);
+		const webcamEffectFrameLoopRef = useRef<ReturnType<
+			typeof createWebcamEffectFrameLoop
+		> | null>(null);
+		const webcamEffectSettingsRef = useRef(webcam?.effect);
 		const webcamBubbleRef = useRef<HTMLDivElement | null>(null);
 		const webcamBubbleInnerRef = useRef<HTMLDivElement | null>(null);
 		const [webcamVideoDimensions, setWebcamVideoDimensions] = useState<{
 			width: number;
 			height: number;
 		} | null>(null);
+		const [webcamEffectRendered, setWebcamEffectRendered] = useState(false);
+		const [webcamEffectStatus, setWebcamEffectStatus] =
+			useState<WebcamEffectPipelineStatus>("idle");
+		const setWebcamVideoElement = useCallback((video: HTMLVideoElement | null) => {
+			webcamVideoRef.current = video;
+			webcamEffectFrameLoopRef.current?.refresh();
+		}, []);
+		const webcamEffectLayerVisibility = getWebcamEffectLayerVisibility({
+			effectType: webcam?.effect?.type ?? "none",
+			status: webcamEffectStatus,
+			hasSafeFrame: webcamEffectRendered,
+		});
 		const captionBoxRef = useRef<HTMLDivElement | null>(null);
 		const captionEditInputRef = useRef<HTMLTextAreaElement | null>(null);
 		const captionEditSessionRef = useRef<CaptionEditSession | null>(null);
@@ -671,7 +699,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 								resolution: window.devicePixelRatio || 1,
 								autoDensity: true,
 								preference: backend,
-								autoStart: true,
+								autoStart: false,
 								sharedTicker: false,
 							},
 							PIXI_RENDERER_INIT_TIMEOUT_MS,
@@ -924,6 +952,9 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		const webcamTimeOffsetMs = webcam?.timeOffsetMs;
 		const webcamCropRegion = webcam?.cropRegion;
 		const webcamMirror = webcam?.mirror ?? false;
+		const webcamUsesTransparentSilhouette =
+			webcam?.effect?.type === "silhouette" && webcam.effect.background === "transparent";
+		webcamEffectSettingsRef.current = webcam?.effect;
 		const webcamHeight = getCropMatchedWebcamHeightPercent(
 			webcamWidth,
 			rawWebcamHeight,
@@ -1005,9 +1036,11 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 					radius: webcamCornerRadius,
 				});
 				const shadowSize = Math.min(scaledDimensions.width, scaledDimensions.height);
-				bubble.style.filter = `drop-shadow(0 ${Math.round(shadowSize * 0.06)}px ${Math.round(
-					shadowSize * 0.22,
-				)}px rgba(0, 0, 0, ${webcamShadow}))`;
+				bubble.style.filter = webcamUsesTransparentSilhouette
+					? "none"
+					: `drop-shadow(0 ${Math.round(shadowSize * 0.06)}px ${Math.round(
+							shadowSize * 0.22,
+						)}px rgba(0, 0, 0, ${webcamShadow}))`;
 				bubble.style.borderRadius = "0px";
 				bubble.style.boxShadow = "none";
 
@@ -1030,6 +1063,7 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				webcamHeight,
 				webcamVideoPath,
 				webcamWidth,
+				webcamUsesTransparentSilhouette,
 			],
 		);
 
@@ -1551,8 +1585,12 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				return;
 			}
 
-			if (suspendRendering) {
-				app.ticker.stop();
+			const tickerState = syncPreviewTickerState(app.ticker, {
+				isPlaying,
+				suspendRendering,
+			});
+
+			if (tickerState === "suspended") {
 				bgVideoRef.current?.pause();
 				webcamVideoRef.current?.pause();
 				layoutVideoContentRef.current?.();
@@ -1564,7 +1602,6 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				return;
 			}
 
-			app.ticker.start();
 			const video = videoRef.current;
 			if (video) {
 				const targetTime = clampMediaTimeToDuration(
@@ -1584,14 +1621,29 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 				| { update?: () => void }
 				| undefined;
 			videoTextureSource?.update?.();
-			requestAnimationFrame(() => {
-				appRef.current?.render();
-			});
+			if (tickerState === "paused") {
+				if (pausedPreviewRenderRafRef.current !== null) {
+					cancelAnimationFrame(pausedPreviewRenderRafRef.current);
+				}
+				pausedPreviewRenderRafRef.current = requestAnimationFrame((timestamp) => {
+					pausedPreviewRenderRafRef.current = null;
+					const currentApp = appRef.current;
+					if (!currentApp) return;
+					renderPausedPreviewFrame(
+						currentApp.ticker,
+						{
+							isPlaying: isPlayingRef.current,
+							suspendRendering: suspendRenderingRef.current,
+						},
+						timestamp,
+					);
+				});
+			}
 			if (isPlayingRef.current) {
 				bgVideoRef.current?.play().catch(() => undefined);
 				webcamVideoRef.current?.play().catch(() => undefined);
 			}
-		}, [pixiReady, suspendRendering]);
+		}, [isPlaying, pixiReady, suspendRendering]);
 
 		// Keep video wallpapers locked to the same source timestamp as the main clip.
 		useEffect(() => {
@@ -2057,13 +2109,143 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 			[syncWebcamMedia],
 		);
 
+		const renderWebcamEffectFrame = useCallback(
+			async (discontinuity = false, presentedTimestampMs?: number, realtime = false) => {
+				const video = webcamVideoRef.current;
+				const canvas = webcamEffectCanvasRef.current;
+				const settings = webcamEffectSettingsRef.current;
+				if (
+					!video ||
+					!canvas ||
+					(settings?.type !== "silhouette" && settings?.type !== "monkey") ||
+					video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+					video.videoWidth <= 0 ||
+					video.videoHeight <= 0
+				) {
+					webcamEffectRenderedRef.current = false;
+					setWebcamEffectRendered(false);
+					setWebcamEffectStatus("idle");
+					return;
+				}
+
+				if (!webcamEffectPipelineRef.current) {
+					webcamEffectPipelineRef.current = new WebcamEffectPipeline();
+					setWebcamEffectStatus("loading");
+				}
+				if (discontinuity) {
+					if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+					if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+					setWebcamEffectStatus("loading");
+				}
+				const result = await webcamEffectPipelineRef.current.processFrame({
+					source: video,
+					timestampMs: Math.max(0, presentedTimestampMs ?? video.currentTime * 1000),
+					settings,
+					mode: "preview",
+					discontinuity,
+					realtime,
+					presentationMirror: webcamMirror,
+				});
+				setWebcamEffectStatus(result.status);
+				const frameAction = getSafeWebcamFrameAction({
+					hasSafeFrame: webcamEffectRenderedRef.current,
+					processed: result.processed,
+					discontinuity,
+				});
+				if (frameAction !== "replace") {
+					return;
+				}
+
+				const backBuffer =
+					webcamEffectBackBufferRef.current ?? document.createElement("canvas");
+				webcamEffectBackBufferRef.current = backBuffer;
+				if (backBuffer.width !== video.videoWidth) backBuffer.width = video.videoWidth;
+				if (backBuffer.height !== video.videoHeight) backBuffer.height = video.videoHeight;
+				const backContext = backBuffer.getContext("2d", { alpha: true });
+				if (!backContext) return;
+				backContext.clearRect(0, 0, backBuffer.width, backBuffer.height);
+				backContext.drawImage(result.source, 0, 0, backBuffer.width, backBuffer.height);
+
+				if (canvas.width !== backBuffer.width) canvas.width = backBuffer.width;
+				if (canvas.height !== backBuffer.height) canvas.height = backBuffer.height;
+				const context = canvas.getContext("2d", { alpha: true });
+				if (!context) {
+					return;
+				}
+				context.save();
+				context.globalCompositeOperation = "copy";
+				context.drawImage(backBuffer, 0, 0, canvas.width, canvas.height);
+				context.restore();
+				webcamEffectRenderedRef.current = true;
+				setWebcamEffectRendered(true);
+			},
+			[webcamMirror],
+		);
+
+		const handleWebcamEffectSeeked = useCallback(() => {
+			void renderWebcamEffectFrame(true);
+		}, [renderWebcamEffectFrame]);
+
+		useEffect(() => {
+			const enabled =
+				webcam?.effect?.type === "silhouette" || webcam?.effect?.type === "monkey";
+			if (!enabled || !webcamEnabled || !webcamVideoPath) {
+				webcamEffectPipelineRef.current?.dispose();
+				webcamEffectPipelineRef.current = null;
+				webcamEffectRenderedRef.current = false;
+				setWebcamEffectRendered(false);
+				setWebcamEffectStatus("idle");
+				return;
+			}
+
+			const frameLoop = createWebcamEffectFrameLoop({
+				getVideo: () => webcamVideoRef.current,
+				renderFrame: (presentedTimestampMs) =>
+					renderWebcamEffectFrame(false, presentedTimestampMs, true),
+				onRenderError: () => {
+					setWebcamEffectStatus("fallback");
+				},
+			});
+			webcamEffectFrameLoopRef.current = frameLoop;
+			frameLoop.start();
+			return () => {
+				if (webcamEffectFrameLoopRef.current === frameLoop) {
+					webcamEffectFrameLoopRef.current = null;
+				}
+				frameLoop.dispose();
+				webcamEffectPipelineRef.current?.dispose();
+				webcamEffectPipelineRef.current = null;
+			};
+		}, [webcam?.effect?.type, webcamEnabled, webcamVideoPath, renderWebcamEffectFrame]);
+
 		useEffect(() => {
 			syncWebcamMedia();
 		}, [syncWebcamMedia]);
 
 		useEffect(() => {
+			if (
+				webcam?.effect?.type !== "none" &&
+				!webcamVideoRef.current?.seeking &&
+				!isPlayingRef.current
+			) {
+				void renderWebcamEffectFrame();
+			}
+		}, [
+			currentTime,
+			renderWebcamEffectFrame,
+			webcam?.effect?.background,
+			webcam?.effect?.feather,
+			webcam?.effect?.opacity,
+			webcam?.effect?.silhouetteColor,
+			webcam?.effect?.type,
+		]);
+
+		useEffect(() => {
 			setWebcamVideoDimensions(null);
 			lastWebcamSyncTimeRef.current = null;
+			webcamEffectRenderedRef.current = false;
+			setWebcamEffectRendered(false);
+			setWebcamEffectStatus("idle");
 		}, [webcamVideoPath]);
 
 		useEffect(() => {
@@ -2704,6 +2886,32 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 		]);
 
 		useEffect(() => {
+			if (
+				isPlaying ||
+				suspendRendering ||
+				!pixiReady ||
+				!videoReady ||
+				pausedPreviewRenderRafRef.current !== null
+			) {
+				return;
+			}
+
+			pausedPreviewRenderRafRef.current = requestAnimationFrame((timestamp) => {
+				pausedPreviewRenderRafRef.current = null;
+				const app = appRef.current;
+				if (!app) return;
+				renderPausedPreviewFrame(
+					app.ticker,
+					{
+						isPlaying: isPlayingRef.current,
+						suspendRendering: suspendRenderingRef.current,
+					},
+					timestamp,
+				);
+			});
+		});
+
+		useEffect(() => {
 			const overlay = cursorOverlayRef.current;
 			if (!overlay) {
 				return;
@@ -2930,6 +3138,10 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 
 		useEffect(() => {
 			return () => {
+				if (pausedPreviewRenderRafRef.current !== null) {
+					cancelAnimationFrame(pausedPreviewRenderRafRef.current);
+					pausedPreviewRenderRafRef.current = null;
+				}
 				if (videoReadyRafRef.current) {
 					cancelAnimationFrame(videoReadyRafRef.current);
 					videoReadyRafRef.current = null;
@@ -3074,18 +3286,50 @@ const VideoPlayback = forwardRef<VideoPlaybackRef, VideoPlaybackProps>(
 											style={webcamCropPreviewContentStyle}
 										>
 											<video
-												ref={webcamVideoRef}
+												ref={setWebcamVideoElement}
 												src={webcamVideoPath}
 												className="pointer-events-none absolute inset-0 block h-full w-full object-fill"
+												style={{
+													opacity: webcamEffectLayerVisibility.rawOpacity,
+												}}
 												muted
 												playsInline
 												preload="auto"
 												aria-hidden="true"
 												onLoadedMetadata={handleWebcamMediaReady}
 												onLoadedData={handleWebcamMediaReady}
+												onSeeked={handleWebcamEffectSeeked}
+											/>
+											<canvas
+												ref={webcamEffectCanvasRef}
+												className="pointer-events-none absolute inset-0 block h-full w-full"
+												style={{
+													opacity:
+														webcamEffectLayerVisibility.processedOpacity,
+												}}
+												aria-hidden="true"
 											/>
 										</div>
 									</div>
+									{webcam?.effect?.type !== "none" &&
+									webcamEffectStatus === "loading" &&
+									!webcamEffectRendered ? (
+										<div
+											className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/10 text-white"
+											aria-label="Preparing webcam effect"
+										>
+											<SpinnerGap className="h-5 w-5 animate-spin drop-shadow" />
+										</div>
+									) : null}
+									{webcam?.effect?.type !== "none" &&
+									webcamEffectStatus === "fallback" ? (
+										<div
+											className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/65 p-1 text-white"
+											title="The webcam effect is unavailable. The camera remains hidden; turn the effect off and on to retry."
+										>
+											<WarningCircle className="h-4 w-4" weight="fill" />
+										</div>
+									) : null}
 								</div>
 							</div>
 						) : null}

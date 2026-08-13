@@ -6,15 +6,23 @@ import {
 	MicrophoneSlashIcon,
 	MinusIcon,
 	MonitorIcon,
+	SpinnerGapIcon,
 	TimerIcon,
 	VideoCameraIcon,
 	VideoCameraSlashIcon,
+	WarningCircleIcon,
 	XIcon,
 } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RxDragHandleDots2 } from "react-icons/rx";
 import { Separator } from "@/components/ui/separator";
+import {
+	DEFAULT_EDITOR_PREFERENCES,
+	loadEditorPreferences,
+	saveEditorPreferences,
+} from "@/components/video-editor/editorPreferences";
+import { getWebcamEffectLayerVisibility } from "@/lib/webcamEffects";
 import { useScopedT } from "../../contexts/I18nContext";
 import { useMicrophoneDevices } from "../../hooks/useMicrophoneDevices";
 import { useScreenRecorder } from "../../hooks/useScreenRecorder";
@@ -77,12 +85,37 @@ function LaunchWindowContent() {
 		setWebcamDeviceId,
 		countdownDelay,
 		setCountdownDelay,
-		preparePermissions,
 	} = useScreenRecorder();
 
 	const { elapsed, formatTime } = useRecordingTimer(recording, paused);
 	const hudContentRef = useRef<HTMLDivElement>(null);
 	const hudBarRef = useRef<HTMLDivElement>(null);
+	const [webcamEffect, setWebcamEffect] = useState(() => ({
+		...loadEditorPreferences().webcam.effect,
+	}));
+	useEffect(() => {
+		const syncPersistedWebcamEffect = () => {
+			if (document.visibilityState === "visible") {
+				setWebcamEffect({ ...loadEditorPreferences().webcam.effect });
+			}
+		};
+		document.addEventListener("visibilitychange", syncPersistedWebcamEffect);
+		window.addEventListener("focus", syncPersistedWebcamEffect);
+		window.addEventListener("storage", syncPersistedWebcamEffect);
+		return () => {
+			document.removeEventListener("visibilitychange", syncPersistedWebcamEffect);
+			window.removeEventListener("focus", syncPersistedWebcamEffect);
+			window.removeEventListener("storage", syncPersistedWebcamEffect);
+		};
+	}, []);
+	const updateWebcamEffectType = (type: "none" | "silhouette" | "monkey") => {
+		const nextEffect = { ...webcamEffect, type };
+		setWebcamEffect(nextEffect);
+		const persistedWebcam = loadEditorPreferences().webcam ?? DEFAULT_EDITOR_PREFERENCES.webcam;
+		saveEditorPreferences({
+			webcam: { ...persistedWebcam, effect: nextEffect },
+		});
+	};
 
 	const {
 		selectedSource,
@@ -96,6 +129,8 @@ function LaunchWindowContent() {
 	} = useLaunchWindowActions();
 
 	const showWebcamControls = webcamEnabled && !recording;
+	const webcamPreviewIsTransparent =
+		webcamEffect.type === "silhouette" && webcamEffect.background === "transparent";
 	const { devices, selectedDeviceId, setSelectedDeviceId } = useMicrophoneDevices(
 		microphoneEnabled || openId === "mic",
 		microphoneDeviceId,
@@ -113,7 +148,7 @@ function LaunchWindowContent() {
 		hideHudFromCapture,
 		chooseRecordingsDirectory,
 		toggleHudCaptureProtection,
-	} = useLaunchWindowSystemState(preparePermissions);
+	} = useLaunchWindowSystemState();
 
 	const supportsHudCaptureProtection = platform !== "linux";
 
@@ -143,13 +178,24 @@ function LaunchWindowContent() {
 		handleWebcamPreviewPointerMove,
 		handleWebcamPreviewPointerUp,
 		setWebcamPreviewNode,
+		setWebcamPreviewCanvasNode,
 		setRecordingWebcamPreviewNode,
+		setRecordingWebcamPreviewCanvasNode,
+		webcamEffectRendered,
+		webcamEffectStatus,
+		retryWebcamEffect,
 	} = useWebcamPreviewOverlay({
 		webcamEnabled,
 		webcamDeviceId,
 		showWebcamControls,
 		webcamPopoverOpen: openId === "webcam",
 		hudOverlayMousePassthroughSupported,
+		webcamEffect,
+	});
+	const webcamEffectLayerVisibility = getWebcamEffectLayerVisibility({
+		effectType: webcamEffect.type,
+		status: webcamEffectStatus,
+		hasSafeFrame: webcamEffectRendered,
 	});
 
 	useEffect(() => {
@@ -183,6 +229,15 @@ function LaunchWindowContent() {
 			isWebcamPreviewDraggingRef,
 			webcamPreviewDragStartRef,
 		});
+
+	useEffect(() => {
+		if (!recording) return;
+		if (openId) requestClose(openId);
+		const restorePassthrough = window.setTimeout(() => {
+			window.electronAPI?.hudOverlaySetIgnoreMouse?.(true);
+		}, 0);
+		return () => window.clearTimeout(restorePassthrough);
+	}, [openId, recording, requestClose]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -299,6 +354,12 @@ function LaunchWindowContent() {
 				onToggleFloatingPreview={() => setShowFloatingWebcamPreview((current) => !current)}
 				showWebcamControls={showWebcamControls}
 				setWebcamPreviewNode={setWebcamPreviewNode}
+				setWebcamPreviewCanvasNode={setWebcamPreviewCanvasNode}
+				webcamEffectType={webcamEffect.type}
+				webcamEffectRendered={webcamEffectRendered}
+				webcamEffectStatus={webcamEffectStatus}
+				onRetryWebcamEffect={retryWebcamEffect}
+				onWebcamEffectTypeChange={updateWebcamEffectType}
 				videoDevices={videoDevices}
 				webcamDeviceId={webcamDeviceId}
 				selectedVideoDeviceId={selectedVideoDeviceId}
@@ -522,7 +583,11 @@ function LaunchWindowContent() {
 						{showRecordingWebcamPreview && (
 							<div
 								ref={recordingWebcamPreviewContainerRef}
-								className={`${styles.recordingWebcamPreview} ${styles.electronNoDrag} pointer-events-auto`}
+								className={`${styles.recordingWebcamPreview} ${
+									webcamPreviewIsTransparent
+										? styles.recordingWebcamPreviewTransparent
+										: ""
+								} ${styles.electronNoDrag} pointer-events-auto`}
 								data-hud-interactive
 								title={t("recording.webcam")}
 								style={{
@@ -540,8 +605,36 @@ function LaunchWindowContent() {
 									className={styles.recordingWebcamPreviewVideo}
 									muted
 									playsInline
-									style={{ transform: "scaleX(-1)" }}
+									style={{
+										opacity: webcamEffectLayerVisibility.rawOpacity,
+										transform: "scaleX(-1)",
+									}}
 								/>
+								<canvas
+									ref={setRecordingWebcamPreviewCanvasNode}
+									className={styles.recordingWebcamPreviewVideo}
+									style={{
+										opacity: webcamEffectLayerVisibility.processedOpacity,
+										transform: "scaleX(-1)",
+									}}
+									aria-hidden="true"
+								/>
+								{webcamEffect.type !== "none" &&
+								webcamEffectStatus === "loading" &&
+								!webcamEffectRendered ? (
+									<div className="pointer-events-none absolute inset-0 flex items-center justify-center text-white">
+										<SpinnerGapIcon className="h-6 w-6 animate-spin drop-shadow" />
+									</div>
+								) : null}
+								{webcamEffect.type !== "none" &&
+								webcamEffectStatus === "fallback" ? (
+									<div
+										className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/70 p-1.5 text-white"
+										title={t("recording.personSilhouetteRetry")}
+									>
+										<WarningCircleIcon className="h-5 w-5" weight="fill" />
+									</div>
+								) : null}
 							</div>
 						)}
 					</div>

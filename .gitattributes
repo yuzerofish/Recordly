@@ -17,9 +17,14 @@
 *.pdf binary
 *.png binary
 *.ttf binary
+*.tflite binary
 *.wasm binary
 *.wav binary
 *.webm binary
 *.woff binary
 *.woff2 binary
 *.zip binary
+
+# Keep bundled third-party runtime assets byte-for-byte identical to their packages.
+public/mediapipe/vision/wasm/*.js binary
+public/licenses/RECORDLY-AGPL-3.0.txt -whitespace

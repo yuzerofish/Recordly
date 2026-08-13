@@ -17,6 +17,15 @@ https://github.com/user-attachments/assets/9b66c71d-ac97-49ff-a0c9-63ac26edf2e4
 
 ---
 
+## 黑色剪影个人分支
+
+此分支是基于上游 Recordly 的 Apple Silicon macOS 个人派生版本。摄像头人物效果保持 **原始画面** 和 **黑色剪影** 两种状态，并使用随应用打包的本地 MediaPipe 模型。剪影模式会把人物渲染为纯黑并叠加跟随面部的卡通头像；预览、项目回放、MP4 和 GIF 渲染复用同一套效果参数与帧时间逻辑。
+
+- 开发分支：`codex/recordly-silhouette`
+- 交付范围与验证证据：[个人版项目归档](./docs/recordly-silhouette-personal-archive.md)
+- 分发状态：仅在 Apple Silicon macOS 上完成构建和测试，不是上游官方二进制，也不是已公证的公开发行版
+- 下载说明：本 README 后文的上游 Release 链接不包含黑色剪影版本
+
 ## Recordly 是什么？
 
 Recordly 是一款桌面应用，用于录制并编辑屏幕内容，内置面向演示视频的动态呈现工具。你不需要再把原始素材交给动效设计师去补缩放、光标润色或样式化背景，Recordly 可以在一个地方免费完成整套流程。

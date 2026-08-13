@@ -14,6 +14,8 @@ struct CaptureConfig: Codable {
 	let microphoneDeviceId: String?
 	let microphoneLabel: String?
 	let microphoneOutputPath: String?
+	let hostProcessId: pid_t?
+	let hostBundleIdentifier: String?
 }
 
 let targetCaptureFPS = 60
@@ -29,6 +31,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	private var microphoneOnlyInput: AVAssetWriterInput?
 	private var stream: SCStream?
 	private var firstSampleTime: CMTime = .zero
+	private var firstSampleHostTime: CMTime?
 	private var firstSystemAudioSampleTime: CMTime?
 	private var firstMicrophoneSampleTime: CMTime?
 	private var lastSampleBuffer: CMSampleBuffer?
@@ -39,7 +42,6 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	private var isRecording = false
 	private var isPaused = false
 	private var pauseStartedHostTime: CMTime?
-	private var pendingResumeAdjustment = false
 	private var accumulatedPausedDuration: CMTime = .zero
 	private var sessionStarted = false
 	private var frameCount = 0
@@ -103,6 +105,14 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			guard let window = availableContent.windows.first(where: { $0.windowID == windowId }) else {
 				throw NSError(domain: "RecordlyCapture", code: 3, userInfo: [NSLocalizedDescriptionKey: "Window not found"])
 			}
+			if let hostProcessId = config.hostProcessId,
+			   window.owningApplication?.processID == hostProcessId {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 13,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_WINDOW_CAPTURE_DENIED"]
+				)
+			}
 
 			filter = SCContentFilter(desktopIndependentWindow: window)
 
@@ -124,7 +134,33 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				throw NSError(domain: "RecordlyCapture", code: 4, userInfo: [NSLocalizedDescriptionKey: "Display not found"])
 			}
 
-			filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+			guard let hostProcessId = config.hostProcessId, hostProcessId > 0 else {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 14,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_APPLICATION_FILTER_UNRESOLVED"]
+				)
+			}
+			let hostApplications = availableContent.applications.filter { application in
+				if application.processID == hostProcessId {
+					return true
+				}
+				guard let hostBundleIdentifier = config.hostBundleIdentifier,
+				      !hostBundleIdentifier.isEmpty else {
+					return false
+				}
+				return application.bundleIdentifier == hostBundleIdentifier
+			}
+			guard !hostApplications.isEmpty else {
+				throw NSError(
+					domain: "RecordlyCapture",
+					code: 15,
+					userInfo: [NSLocalizedDescriptionKey: "HOST_APPLICATION_FILTER_UNRESOLVED"]
+				)
+			}
+			filter = SCContentFilter(display: display, excludingApplications: hostApplications, exceptingWindows: [])
+			fputs("HOST_APPLICATION_EXCLUDED\n", stderr)
+			fflush(stderr)
 			let displayBounds = CGDisplayBounds(display.displayID)
 			let scaleFactor = ScreenCaptureRecorder.scaleFactor(for: display.displayID)
 			outputWidth = max(2, Int(displayBounds.width) * scaleFactor)
@@ -264,10 +300,10 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		isRecording = true
 		isPaused = false
 		pauseStartedHostTime = nil
-		pendingResumeAdjustment = false
 		accumulatedPausedDuration = .zero
 		frameCount = 0
 		firstSampleTime = .zero
+		firstSampleHostTime = nil
 		lastVideoPresentationTime = .zero
 		lastVideoDuration = .zero
 		startWindowValidationIfNeeded()
@@ -287,13 +323,17 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		guard isRecording, !isPaused else { return }
 		isPaused = true
 		pauseStartedHostTime = CMClockGetTime(CMClockGetHostTimeClock())
-		pendingResumeAdjustment = false
 	}
 
 	func resumeCapture() {
 		guard isRecording, isPaused else { return }
+		let resumedAtHostTime = CMClockGetTime(CMClockGetHostTimeClock())
+		if let pauseStartedHostTime {
+			accumulatedPausedDuration =
+				accumulatedPausedDuration + max(.zero, resumedAtHostTime - pauseStartedHostTime)
+		}
+		pauseStartedHostTime = nil
 		isPaused = false
-		pendingResumeAdjustment = true
 	}
 
 	func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
@@ -359,6 +399,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		windowValidationTask?.cancel()
 		windowValidationTask = nil
 		trackedWindowId = nil
+		let captureEndHostTime = CMClockGetTime(CMClockGetHostTimeClock())
 
 		if let activeStream = stream {
 			do {
@@ -370,15 +411,21 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		stream = nil
 		isRecording = false
 
+		var videoEndTime = lastVideoPresentationTime + (lastSampleBuffer.map { frameDuration(for: $0) } ?? .zero)
 		if let originalBuffer = lastSampleBuffer, let videoInput = videoInput {
-			let additionalTime = lastVideoPresentationTime + frameDuration(for: originalBuffer)
-			let timing = CMSampleTimingInfo(duration: originalBuffer.duration, presentationTimeStamp: additionalTime, decodeTimeStamp: originalBuffer.decodeTimeStamp)
+			let terminalFrameDuration = frameDuration(for: originalBuffer)
+			let recordedDuration = activeCaptureDuration(atHostTime: captureEndHostTime)
+			let earliestAdditionalTime = lastVideoPresentationTime + terminalFrameDuration
+			let durationAlignedTime = max(.zero, recordedDuration - terminalFrameDuration)
+			let additionalTime = max(earliestAdditionalTime, durationAlignedTime)
+			let timing = CMSampleTimingInfo(duration: terminalFrameDuration, presentationTimeStamp: additionalTime, decodeTimeStamp: originalBuffer.decodeTimeStamp)
 			if let additionalSampleBuffer = try? CMSampleBuffer(copying: originalBuffer, withNewTiming: [timing]) {
-				videoInput.append(additionalSampleBuffer)
+				if videoInput.append(additionalSampleBuffer) {
+					videoEndTime = additionalTime + terminalFrameDuration
+				}
 			}
 		}
 
-		let videoEndTime = lastVideoPresentationTime + (lastSampleBuffer.map { frameDuration(for: $0) } ?? .zero)
 		let endTime = resolvedCaptureEndTime(videoEndTime: videoEndTime)
 		assetWriter?.endSession(atSourceTime: endTime)
 		videoInput?.markAsFinished()
@@ -403,6 +450,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		microphoneOutputURL = nil
 		sessionStarted = false
 		firstSampleTime = .zero
+		firstSampleHostTime = nil
 		firstSystemAudioSampleTime = nil
 		firstMicrophoneSampleTime = nil
 		firstInlineAudioSampleTime = nil
@@ -414,7 +462,6 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		frameCount = 0
 		isPaused = false
 		pauseStartedHostTime = nil
-		pendingResumeAdjustment = false
 		accumulatedPausedDuration = .zero
 		capturesSystemAudio = false
 		capturesMicrophone = false
@@ -429,18 +476,11 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 
 		let sampleTime = sampleBuffer.presentationTimeStamp
-		if pendingResumeAdjustment, let pauseStartedHostTime {
-			let pauseGap = sampleTime - pauseStartedHostTime
-			if pauseGap > .zero {
-				accumulatedPausedDuration = accumulatedPausedDuration + pauseGap
-			}
-			self.pauseStartedHostTime = nil
-			pendingResumeAdjustment = false
-		}
 
 		if outputType == .screen {
 			if firstSampleTime == .zero {
 				firstSampleTime = sampleTime
+				firstSampleHostTime = CMClockGetTime(CMClockGetHostTimeClock())
 			}
 		}
 
@@ -455,6 +495,19 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 
 		return max(.zero, sampleTime - firstSampleTime - accumulatedPausedDuration)
+	}
+
+	private func activeCaptureDuration(atHostTime hostTime: CMTime) -> CMTime {
+		guard let firstSampleHostTime, firstSampleHostTime.isValid else {
+			return .zero
+		}
+
+		var pausedDuration = accumulatedPausedDuration
+		if isPaused, let pauseStartedHostTime {
+			pausedDuration = pausedDuration + max(.zero, hostTime - pauseStartedHostTime)
+		}
+
+		return max(.zero, hostTime - firstSampleHostTime - pausedDuration)
 	}
 
 	private func frameDuration(for sampleBuffer: CMSampleBuffer) -> CMTime {
@@ -715,4 +768,3 @@ DispatchQueue.global(qos: .utility).async {
 }
 
 service.waitUntilFinished()
-
